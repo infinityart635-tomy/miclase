@@ -504,20 +504,8 @@ function toSafeFileComponent(value) {
     .replace(/^_+|_+$/g, "");
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, callback) => {
-    callback(null, uploadsDir);
-  },
-  filename: (_req, file, callback) => {
-    const ext = path.extname(file.originalname || "");
-    const base = path.basename(file.originalname || "archivo", ext);
-    const safeBase = toSafeFileComponent(base) || "archivo";
-    callback(null, `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`);
-  },
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 25 * 1024 * 1024,
   },
@@ -546,6 +534,13 @@ function parseTitleFromFile(file) {
   const originalName = String(file?.originalname || "").trim();
   const ext = path.extname(originalName);
   return originalName ? path.basename(originalName, ext) : "Archivo";
+}
+
+function buildUploadFileName(file) {
+  const ext = path.extname(file?.originalname || "");
+  const base = path.basename(file?.originalname || "archivo", ext);
+  const safeBase = toSafeFileComponent(base) || "archivo";
+  return `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
 }
 
 function isDescendantFolder(materials, materialId, targetFolderId) {
@@ -1115,9 +1110,18 @@ app.post(
         res.status(400).json({ error: "Selecciona un archivo." });
         return;
       }
+      const storedFileName = buildUploadFileName(req.file);
+      const storedFilePath = path.join(uploadsDir, storedFileName);
+      try {
+        await fsp.writeFile(storedFilePath, req.file.buffer);
+      } catch (error) {
+        console.error("MiClase upload write error:", error);
+        res.status(500).json({ error: "No pude guardar el archivo subido." });
+        return;
+      }
       material.title = title || parseTitleFromFile(req.file);
       material.content = content;
-      material.fileName = req.file.filename;
+      material.fileName = storedFileName;
       material.originalName = req.file.originalname;
       material.mimeType =
         req.file.mimetype ||
