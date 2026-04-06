@@ -31,6 +31,8 @@ const CAREER_COLORS = [
 let pool = null;
 let appStateCache = { users: [], careers: [] };
 
+app.set("trust proxy", 1);
+
 if (hasDatabase) {
   pool = new Pool({
     connectionString: databaseUrl,
@@ -488,6 +490,7 @@ app.use(
   session({
     name: "miclase.sid",
     secret: SESSION_SECRET,
+    proxy: process.env.NODE_ENV === "production",
     resave: false,
     saveUninitialized: false,
     cookie: {
