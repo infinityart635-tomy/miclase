@@ -4,39 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MiClase</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-  <main class="hero">
-    <section class="panel welcome-panel" id="welcomePanel">
-      <p class="eyebrow">MiClase</p>
-      <h1>Organiza tus clases en un solo lugar.</h1>
-      <p class="lead">Un espacio simple para entrar, ordenar materias y seguir tu cursada.</p>
-      <button class="button" id="startButton" type="button">Empezar</button>
-    </section>
+<body class="logged-out">
+  <div class="page-shell">
+    <header class="brand-block">
+      <p class="eyebrow">Campus local</p>
+      <h1>MiClase</h1>
+    </header>
 
-    <section class="panel login-panel hidden" id="loginPanel">
-      <p class="eyebrow">Acceso</p>
-      <h2>Ingresar</h2>
-      <form class="login-form">
+    <main class="auth-card">
+      <div class="auth-copy">
+        <p class="eyebrow">Acceso</p>
+        <h2>Iniciar sesion</h2>
+        <p>Entra con tu nombre, apellido, nombre completo o Gmail y tu contrasena.</p>
+      </div>
+
+      <form class="auth-form">
         <label>
-          <span>Correo</span>
-          <input type="email" placeholder="tucorreo@gmail.com">
+          <span>Usuario o Gmail</span>
+          <input type="text" placeholder="Ej: Juan, Perez, Juan Perez o tucorreo@gmail.com">
         </label>
+
         <label>
           <span>Contrasena</span>
           <input type="password" placeholder="Tu contrasena">
         </label>
-        <button class="button" type="submit">Entrar</button>
-      </form>
-      <button class="link-button" id="backButton" type="button">Volver</button>
-    </section>
 
-    <p class="footer">MiClase <span id="year"></span></p>
-  </main>
+        <button class="primary-button" type="submit">ENTRAR</button>
+        <button class="secondary-button" type="button">NO TENGO CUENTA</button>
+        <button class="secondary-button" type="button">OLVIDE MI CONTRASENA</button>
+      </form>
+    </main>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

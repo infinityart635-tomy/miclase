@@ -2,6 +2,10 @@
 setlocal
 
 cd /d "%~dp0"
+git config --local user.name "infinityart635-tomy"
+git config --local user.email "infinityart635@gmail.com"
+git config --local credential.username "infinityart635-tomy"
+git remote set-url origin "https://infinityart635-tomy@github.com/infinityart635-tomy/miclase.git"
 git add .
 git commit -m "Update MiClase" 2>nul
 git push origin main
