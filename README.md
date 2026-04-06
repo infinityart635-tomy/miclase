@@ -1,6 +1,6 @@
 # MiClase
 
-Base limpia de Express lista para subir a GitHub y desplegar en Railway.
+Base limpia de Express lista para subir a GitHub y desplegar en Railway con PostgreSQL.
 
 ## Requisitos
 
@@ -15,13 +15,20 @@ npm start
 
 La app queda disponible en `http://localhost:3000`.
 
+## Variables de entorno
+
+- `DATABASE_URL` obligatorio para usar PostgreSQL
+- `NODE_ENV=production` recomendado en Railway
+
 ## Deploy en Railway
 
-Railway detecta `npm start` automaticamente. El servidor usa `process.env.PORT`, asi que no requiere cambios extra.
+Railway detecta `npm start` automaticamente. El servidor usa `process.env.PORT` y `process.env.DATABASE_URL`.
+Al iniciar crea una tabla minima llamada `app_meta` si no existe.
 
 ## Estado actual
 
-- Sin base de datos local
+- Sin SQLite
+- Preparado para PostgreSQL
 - Sin usuarios
 - Sin sesiones
 - Sin archivos subidos
