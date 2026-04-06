@@ -2,7 +2,7 @@
   "name": "miclase",
   "version": "2.0.0",
   "private": true,
-  "description": "Base limpia de MiClase lista para GitHub y Railway.",
+  "description": "MiClase con frontend recuperado y backend reconstruido.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "express": "^5.2.1",
+    "express-session": "^1.18.1",
+    "mime-types": "^3.0.1",
+    "multer": "^2.0.2",
     "pg": "^8.16.3"
   }
 }

@@ -4,40 +4,69 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MiClase</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=1775116186732319">
 </head>
-<body class="logged-out">
+<body>
   <div class="page-shell">
-    <header class="brand-block">
-      <p class="eyebrow">Campus local</p>
-      <h1>MiClase</h1>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Campus local</p>
+        <h1>MiClase</h1>
+        <p class="subtitle">Carreras, unidades, horarios y materiales compartidos en una sola web.</p>
+      </div>
+      <div id="sessionBox" class="session-box hidden"></div>
     </header>
 
-    <main class="auth-card">
-      <div class="auth-copy">
-        <p class="eyebrow">Acceso</p>
-        <h2>Iniciar sesion</h2>
-        <p>Entra con tu nombre, apellido, nombre completo o Gmail y tu contrasena.</p>
-      </div>
-
-      <form class="auth-form">
-        <label>
-          <span>Usuario o Gmail</span>
-          <input type="text" placeholder="Ej: Juan, Perez, Juan Perez o tucorreo@gmail.com">
-        </label>
-
-        <label>
-          <span>Contrasena</span>
-          <input type="password" placeholder="Tu contrasena">
-        </label>
-
-        <button class="primary-button" type="submit">ENTRAR</button>
-        <button class="secondary-button" type="button">NO TENGO CUENTA</button>
-        <button class="secondary-button" type="button">OLVIDE MI CONTRASENA</button>
-      </form>
-    </main>
+    <main id="app"></main>
   </div>
 
-  <script src="/app.js"></script>
+  <template id="loginTemplate">
+    <section class="panel auth-panel">
+      <div>
+        <p class="eyebrow">Acceso</p>
+        <h2 data-auth-title>Iniciar sesion</h2>
+        <p data-auth-copy>Entra con tu nombre, apellido, nombre completo o Gmail y tu contrasena.</p>
+      </div>
+      <form id="loginForm" class="stack-form auth-form" autocomplete="off">
+        <input class="ghost-autofill" type="text" name="fake-user" autocomplete="username" tabindex="-1" aria-hidden="true">
+        <input class="ghost-autofill" type="password" name="fake-pass" autocomplete="current-password" tabindex="-1" aria-hidden="true">
+        <label data-login-identifier>
+          <span>Usuario o Gmail</span>
+          <input name="identifier" required maxlength="160" placeholder="Ej: Juan, Perez, Juan Perez o tucorreo@gmail.com" autocomplete="off" autocapitalize="none" spellcheck="false" data-auth-field>
+        </label>
+        <label class="hidden" data-register-first-name>
+          <span>Nombre</span>
+          <input name="firstName" maxlength="80" placeholder="Ej: Juan" autocomplete="off" autocapitalize="words" spellcheck="false" data-auth-field>
+        </label>
+        <label class="hidden" data-register-last-name>
+          <span>Apellido</span>
+          <input name="lastName" maxlength="80" placeholder="Ej: Perez" autocomplete="off" autocapitalize="words" spellcheck="false" data-auth-field>
+        </label>
+        <label class="hidden" data-register-email>
+          <span>Gmail</span>
+          <input type="email" name="email" maxlength="160" placeholder="Ej: tucorreo@gmail.com" autocomplete="off" autocapitalize="none" spellcheck="false" data-auth-field>
+        </label>
+        <label class="hidden" data-reset-email>
+          <span>Gmail</span>
+          <input type="email" name="resetEmail" maxlength="160" placeholder="Ej: tucorreo@gmail.com" autocomplete="off" autocapitalize="none" spellcheck="false" data-auth-field>
+        </label>
+        <label data-password-row>
+          <span>Contrasena</span>
+          <input type="password" name="password" required maxlength="120" placeholder="Tu contrasena" autocomplete="new-password" data-auth-field>
+        </label>
+        <label class="hidden" data-repeat-password>
+          <span>Repetir contrasena</span>
+          <input type="password" name="passwordRepeat" maxlength="120" placeholder="Repite la contrasena" autocomplete="new-password" data-auth-field>
+        </label>
+        <button type="submit" data-auth-submit>Entrar</button>
+        <button type="button" class="secondary" id="toggleAuthMode">No tengo cuenta</button>
+        <button type="button" class="secondary" id="forgotPasswordBtn">Olvide mi contrasena</button>
+        <button type="button" class="secondary hidden" id="resetPasswordBtn">Cambiar contrasena</button>
+      </form>
+    </section>
+  </template>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/app.js?v=17751155589933064"></script>
 </body>
 </html>
