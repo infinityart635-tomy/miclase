@@ -11,23 +11,37 @@
 </head>
 <body>
   <main class="hero">
-    <p class="eyebrow">Deploy-ready</p>
-    <h1>MiClase</h1>
-    <p class="lead">
-      Esta instancia fue reiniciada. No conserva usuarios, archivos ni datos locales.
-    </p>
-    <div class="card-row">
-      <section class="card">
-        <h2>GitHub</h2>
-        <p>El repositorio queda limpio para versionar sin arrastrar datos ni dependencias instaladas.</p>
-      </section>
-      <section class="card">
-        <h2>Railway</h2>
-        <p>El servidor usa `PORT`, expone `/api/health` y sirve una app estatica simple.</p>
-      </section>
-    </div>
-    <a class="button" href="/api/health">Probar estado</a>
-    <p class="footer">Anio <span id="year"></span> · MiClase</p>
+    <section class="hero-panel">
+      <p class="eyebrow">MiClase</p>
+      <h1>Organiza tus clases en un solo lugar.</h1>
+      <p class="lead">
+        Horarios, materias, apuntes y seguimiento academico con una interfaz clara y lista para crecer.
+      </p>
+      <div class="actions">
+        <a class="button" href="#paneles">Empezar</a>
+        <a class="button button-secondary" href="/api/health">Estado</a>
+      </div>
+    </section>
+
+    <section class="card-row" id="paneles">
+      <article class="card feature-card">
+        <span class="card-kicker">01</span>
+        <h2>Materias</h2>
+        <p>Crea una base ordenada para cada clase, con contenidos y materiales centralizados.</p>
+      </article>
+      <article class="card feature-card accent-card">
+        <span class="card-kicker">02</span>
+        <h2>Horarios</h2>
+        <p>Visualiza tu semana y deja la estructura lista para crecer sobre PostgreSQL.</p>
+      </article>
+      <article class="card feature-card">
+        <span class="card-kicker">03</span>
+        <h2>Seguimiento</h2>
+        <p>Prepara una base estable para sumar usuarios, paneles y avances sin rehacer el proyecto.</p>
+      </article>
+    </section>
+
+    <p class="footer">MiClase <span id="year"></span></p>
   </main>
   <script src="/app.js"></script>
 </body>
