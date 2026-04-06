@@ -39,6 +39,10 @@ const LAST_CAREER_STORAGE_PREFIX = 'miclase:last-career:';
 const LAST_STUDY_YEAR_STORAGE_PREFIX = 'miclase:last-study-year:';
 const SUBJECT_LIBRARY_PREFS_PREFIX = 'miclase:subject-library:';
 const SUBJECT_FAVORITES_PREFIX = 'miclase:subject-favorites:';
+const CACHED_SESSION_STORAGE_KEY = 'miclase:cached-session';
+const CACHED_DATA_STORAGE_PREFIX = 'miclase:cached-data:';
+const LAST_ROUTE_STORAGE_PREFIX = 'miclase:last-route:';
+const OFFLINE_WARM_LIMIT = 18;
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -60,6 +64,155 @@ function getSubjectFavoritesKey(careerId = state.selectedCareerId) {
   const userId = String(state.user?.id || '').trim();
   const normalizedCareerId = String(careerId || '').trim();
   return userId && normalizedCareerId ? `${SUBJECT_FAVORITES_PREFIX}${userId}:${normalizedCareerId}` : '';
+}
+
+function getCachedDataStorageKey() {
+  const userId = String(state.user?.id || '').trim();
+  return userId ? `${CACHED_DATA_STORAGE_PREFIX}${userId}` : '';
+}
+
+function getLastRouteStorageKey() {
+  const userId = String(state.user?.id || '').trim();
+  return userId ? `${LAST_ROUTE_STORAGE_PREFIX}${userId}` : '';
+}
+
+function persistCachedSession(user) {
+  try {
+    if (user) {
+      window.localStorage.setItem(CACHED_SESSION_STORAGE_KEY, JSON.stringify(user));
+      return;
+    }
+    window.localStorage.removeItem(CACHED_SESSION_STORAGE_KEY);
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function restoreCachedSession() {
+  try {
+    const raw = window.localStorage.getItem(CACHED_SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function persistCachedData(db) {
+  const key = getCachedDataStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(db));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function restoreCachedData() {
+  const key = getCachedDataStorageKey();
+  if (!key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function persistLastRoute() {
+  const key = getLastRouteStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({
+      selectedCareerId: state.selectedCareerId || '',
+      selectedStudyYear: state.selectedStudyYear || '',
+      selectedSubjectId: state.selectedSubjectId || '',
+      currentSubjectFolderId: state.currentSubjectFolderId || '',
+    }));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function restoreLastRoute() {
+  const key = getLastRouteStorageKey();
+  if (!key) return;
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    state.selectedCareerId = String(parsed.selectedCareerId || state.selectedCareerId || '').trim() || null;
+    state.selectedStudyYear = String(parsed.selectedStudyYear || state.selectedStudyYear || '').trim();
+    state.selectedSubjectId = String(parsed.selectedSubjectId || '').trim() || null;
+    state.currentSubjectFolderId = String(parsed.currentSubjectFolderId || '').trim() || null;
+  } catch (_) {
+    state.currentSubjectFolderId = null;
+  }
+}
+
+function clearOfflineSessionState() {
+  const dataKey = getCachedDataStorageKey();
+  const routeKey = getLastRouteStorageKey();
+  try {
+    window.localStorage.removeItem(CACHED_SESSION_STORAGE_KEY);
+    if (dataKey) {
+      window.localStorage.removeItem(dataKey);
+    }
+    if (routeKey) {
+      window.localStorage.removeItem(routeKey);
+    }
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function getMaterialFileUrl(item) {
+  return item?.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
+}
+
+function postCacheMessage(type, payload = {}) {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready
+    .then((registration) => {
+      const worker = navigator.serviceWorker.controller || registration.active || registration.waiting;
+      worker?.postMessage({ type, ...payload });
+    })
+    .catch(() => {
+      // Keep the app usable even if the cache worker fails.
+    });
+}
+
+function warmOfflineUrls(urls) {
+  const queue = [...new Set((urls || []).filter(Boolean))].slice(0, OFFLINE_WARM_LIMIT);
+  if (!queue.length) return;
+  postCacheMessage('CACHE_URLS', { urls: queue });
+  queue.forEach((url) => {
+    fetch(url, { credentials: 'include' }).catch(() => null);
+  });
+}
+
+function warmCachedSubjectResources(careerId = state.selectedCareerId, subjectId = state.selectedSubjectId) {
+  const career = (state.db.careers || []).find((item) => item.id === careerId);
+  const subject = (career?.subjects || []).find((item) => item.id === subjectId);
+  if (!subject) return;
+  const prioritized = [];
+  const visibleItems = getVisibleSubjectMaterials(subject, state.currentSubjectFolderId);
+  prioritized.push(...visibleItems);
+  prioritized.push(...(subject.materials || []).filter((item) => isMaterialImage(item)));
+  const urls = ['/api/session', '/api/data'];
+  prioritized.forEach((item) => {
+    const fileUrl = getMaterialFileUrl(item);
+    if (fileUrl) {
+      urls.push(fileUrl);
+    }
+  });
+  warmOfflineUrls(urls);
+}
+
+function warmCachedMaterialResource(item) {
+  const fileUrl = getMaterialFileUrl(item);
+  if (!fileUrl) return;
+  warmOfflineUrls([fileUrl]);
 }
 
 function restoreLastCareerPreference() {
@@ -251,6 +404,7 @@ async function boot() {
   await refreshSession();
   if (state.user) {
     restoreLastCareerPreference();
+    restoreLastRoute();
     restoreSubjectLibraryPreferences();
     await loadData();
   }
@@ -258,11 +412,20 @@ async function boot() {
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, options);
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (_) {
+    const networkError = new Error('Sin conexion.');
+    networkError.isNetworkError = true;
+    throw networkError;
+  }
   const type = response.headers.get('content-type') || '';
   const payload = type.includes('application/json') ? await response.json() : null;
   if (!response.ok) {
-    throw new Error(payload?.error || 'Error inesperado.');
+    const apiError = new Error(payload?.error || 'Error inesperado.');
+    apiError.status = response.status;
+    throw apiError;
   }
   return payload;
 }
@@ -305,12 +468,33 @@ function uploadFormData(url, formData, options = {}) {
 }
 
 async function refreshSession() {
-  const data = await api('/api/session');
-  state.user = data.user;
+  try {
+    const data = await api('/api/session');
+    state.user = data.user;
+    persistCachedSession(state.user);
+  } catch (error) {
+    if (!error?.isNetworkError) {
+      throw error;
+    }
+    state.user = restoreCachedSession();
+  }
 }
 
 async function loadData() {
-  const db = await api('/api/data');
+  let db;
+  try {
+    db = await api('/api/data');
+    persistCachedData(db);
+  } catch (error) {
+    if (!error?.isNetworkError) {
+      throw error;
+    }
+    db = restoreCachedData();
+    if (!db) {
+      throw error;
+    }
+    setNotice('Sin internet. Mostrando lo ultimo que ya abriste.');
+  }
   state.db = db;
   if (state.selectedCareerId && !db.careers.find((career) => career.id === state.selectedCareerId)) {
     state.selectedCareerId = null;
@@ -323,6 +507,7 @@ async function loadData() {
   const selectedCareer = db.careers.find((career) => career.id === state.selectedCareerId);
   if (state.selectedSubjectId && !selectedCareer?.subjects?.find((subject) => subject.id === state.selectedSubjectId)) {
     state.selectedSubjectId = null;
+    state.currentSubjectFolderId = null;
   }
   const boards = selectedCareer?.scheduleBoards || [];
   if (boards.length && !boards.find((board) => board.id === state.selectedScheduleBoardId)) {
@@ -618,6 +803,7 @@ function renderTopbar() {
   if (logoutBtn) {
     logoutBtn.onclick = async () => {
       await api('/api/logout', { method: 'POST' });
+      clearOfflineSessionState();
       state.user = null;
       state.db = { careers: [], users: [] };
       state.selectedCareerId = null;
@@ -883,7 +1069,9 @@ function renderLogin() {
       }
 
       state.user = data.user;
+      persistCachedSession(state.user);
       restoreLastCareerPreference();
+      restoreLastRoute();
       clearAuthDraft();
       await loadData();
       setNotice(data.mode === 'login' || state.authMode === 'login' ? 'Sesión iniciada.' : 'Cuenta creada.');
@@ -1066,6 +1254,11 @@ function renderDashboard() {
   wireModalActions();
   state.viewTransition.lastKey = viewSnapshot.key;
   state.viewTransition.lastDepth = viewSnapshot.depth;
+  persistLastRoute();
+  warmOfflineUrls(['/api/session', '/api/data']);
+  if (selected && state.selectedSubjectId) {
+    warmCachedSubjectResources(selected.id, state.selectedSubjectId);
+  }
 }
 
 function getDashboardViewSnapshot(selectedCareer) {
@@ -2487,6 +2680,7 @@ function wireCareerActions(career) {
       state.subjectMaterialSearchQuery = '';
       state.currentSubjectFolderId = null;
       clearMaterialSelection();
+      warmCachedSubjectResources(career.id, state.selectedSubjectId);
       render();
     };
   });
@@ -2622,9 +2816,11 @@ function wireCareerActions(career) {
       if (!material) return;
       if (material.itemType === 'folder') {
         state.currentSubjectFolderId = material.id;
+        warmCachedSubjectResources(career.id, subjectSource?.id || state.selectedSubjectId);
         render();
         return;
       }
+      warmCachedMaterialResource(material);
       openMaterialViewer(subjectSource, material);
     };
   });
@@ -3195,6 +3391,7 @@ function getMaterialFileExtensionLabel(item) {
 }
 
 function openMaterialViewer(subject, item) {
+  warmCachedMaterialResource(item);
   if (item?.itemType === 'link') {
     const linkUrl = normalizeExternalUrl(item.content || '');
     if (linkUrl) {
@@ -3419,12 +3616,15 @@ function wireMaterialViewerControls() {
 }
 
 function wirePdfCanvasViewer(container) {
+  const src = container.dataset.pdfSrc || '';
   if (!window.pdfjsLib) {
+    if (src) {
+      container.innerHTML = `<iframe class="material-pdf-fallback-frame" src="${src}" title="PDF"></iframe>`;
+      return;
+    }
     container.innerHTML = '<div class="material-pdf-loading">No se pudo cargar el visor PDF.</div>';
     return;
   }
-
-  const src = container.dataset.pdfSrc || '';
   let scale = 1;
   let pdfDocumentPromise = null;
   let renderToken = 0;

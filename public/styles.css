@@ -2397,6 +2397,14 @@ th, td {
   color: var(--muted);
   font-size: 0.92rem;
 }
+.material-pdf-fallback-frame {
+  width: 100%;
+  min-height: min(80vh, 860px);
+  height: min(80vh, 860px);
+  border: 0;
+  border-radius: 18px;
+  background: #fff;
+}
 .material-pdf-page-shell {
   margin: 0;
   display: grid;
@@ -2699,6 +2707,11 @@ table td {
   }
   .material-pdf-canvas-viewer {
     padding: 14px 8px 22px;
+  }
+  .material-pdf-fallback-frame {
+    min-height: calc(100vh - 84px);
+    height: calc(100vh - 84px);
+    border-radius: 14px;
   }
   .material-viewer-note-only {
     min-height: calc(100vh - 84px);
