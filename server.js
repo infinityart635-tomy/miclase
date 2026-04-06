@@ -466,6 +466,25 @@ const upload = multer({
     fileSize: 25 * 1024 * 1024,
   },
 });
+const uploadSingleMaterial = (req, res, next) => {
+  upload.single("file")(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    if (error instanceof multer.MulterError) {
+      if (error.code === "LIMIT_FILE_SIZE") {
+        res.status(400).json({ error: "El archivo supera el limite de 25 MB." });
+        return;
+      }
+      res.status(400).json({ error: error.message || "No se pudo subir el archivo." });
+      return;
+    }
+
+    next(error);
+  });
+};
 
 function parseTitleFromFile(file) {
   const originalName = String(file?.originalname || "").trim();
@@ -967,7 +986,7 @@ app.delete("/api/careers/:careerId/schedule/:entryId", ensureAuth, async (req, r
 app.post(
   "/api/careers/:careerId/subjects/:subjectId/materials",
   ensureAuth,
-  upload.single("file"),
+  uploadSingleMaterial,
   async (req, res) => {
     const state = await readState();
     const career = findCareer(state, req.params.careerId);
@@ -1131,6 +1150,13 @@ app.use((req, res) => {
     ok: false,
     error: "Not found",
     path: req.path,
+  });
+});
+
+app.use((error, _req, res, _next) => {
+  console.error("MiClase server error:", error);
+  res.status(500).json({
+    error: "Ocurrio un error en el servidor.",
   });
 });
 
