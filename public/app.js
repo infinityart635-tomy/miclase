@@ -995,10 +995,6 @@ function getUserInitials(name) {
 
 function renderLogin() {
   app.innerHTML = `
-    <section class="login-header">
-      <p class="eyebrow">Campus local</p>
-      <h1>MiClase</h1>
-    </section>
     ${state.notice ? `<div class="notice">${escapeHtml(state.notice)}</div>` : ''}
     ${loginMarkup}
   `;
