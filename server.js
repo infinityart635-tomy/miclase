@@ -18,6 +18,7 @@ const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 const hasDatabase = Boolean(databaseUrl);
 const SESSION_SECRET =
   process.env.SESSION_SECRET || "miclase-dev-secret-change-me";
+const AUTH_COOKIE_NAME = "miclase.auth";
 const DELETE_VOTE_THRESHOLD = 3;
 const CAREER_COLORS = [
   "#d56d4b",
@@ -47,8 +48,63 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function getCookieSettings() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 1000 * 60 * 60 * 24 * 30,
+    path: "/",
+  };
+}
+
 function createId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+function signAuthValue(userId) {
+  const payload = String(userId || "").trim();
+  const signature = crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(payload)
+    .digest("hex");
+  return `${payload}.${signature}`;
+}
+
+function verifyAuthValue(rawValue) {
+  const value = String(rawValue || "");
+  const splitIndex = value.lastIndexOf(".");
+  if (splitIndex <= 0) return "";
+  const payload = value.slice(0, splitIndex);
+  const signature = value.slice(splitIndex + 1);
+  const expected = crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(payload)
+    .digest("hex");
+  try {
+    const valid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected)
+    );
+    return valid ? payload : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function parseCookies(header) {
+  return String(header || "")
+    .split(";")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .reduce((acc, chunk) => {
+      const index = chunk.indexOf("=");
+      if (index <= 0) return acc;
+      const key = chunk.slice(0, index).trim();
+      const value = chunk.slice(index + 1).trim();
+      acc[key] = decodeURIComponent(value);
+      return acc;
+    }, {});
 }
 
 function normalizeEmail(value) {
@@ -512,14 +568,22 @@ app.use(
     proxy: process.env.NODE_ENV === "production",
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 14,
-    },
+    cookie: getCookieSettings(),
   })
 );
+app.use((req, res, next) => {
+  if (req.session?.userId) {
+    next();
+    return;
+  }
+
+  const cookies = parseCookies(req.headers.cookie || "");
+  const persistedUserId = verifyAuthValue(cookies[AUTH_COOKIE_NAME] || "");
+  if (persistedUserId) {
+    req.session.userId = persistedUserId;
+  }
+  next();
+});
 app.use(express.static(publicDir));
 app.use("/files", express.static(uploadsDir));
 
@@ -586,6 +650,7 @@ app.post("/api/register", async (req, res) => {
   state.users.push(user);
   await saveState(state);
   req.session.userId = user.id;
+  res.cookie(AUTH_COOKIE_NAME, signAuthValue(user.id), getCookieSettings());
   res.json({ user: sanitizeUser(user), mode: "register" });
 });
 
@@ -601,10 +666,12 @@ app.post("/api/login", async (req, res) => {
   }
 
   req.session.userId = user.id;
+  res.cookie(AUTH_COOKIE_NAME, signAuthValue(user.id), getCookieSettings());
   res.json({ user: sanitizeUser(user), mode: "login" });
 });
 
 app.post("/api/logout", (req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, { path: "/" });
   req.session.destroy(() => {
     res.json({ ok: true });
   });
