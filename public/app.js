@@ -1782,7 +1782,6 @@ function wireCareerActions(career) {
   const openCareerDelegateModal = document.getElementById('openCareerDelegateModal');
   if (openCareerDelegateModal) {
     openCareerDelegateModal.onclick = () => {
-      const registeredUsers = Array.isArray(state.db.users) ? state.db.users : [];
       openFormModal({
         eyebrow: 'Delegado',
         title: career.delegate ? 'Cambiar delegado' : 'Agregar delegado',
@@ -1793,10 +1792,6 @@ function wireCareerActions(career) {
             value: career.delegate?.fullName || '',
             required: !career.delegate,
             placeholder: 'Ej: Tomas Meister',
-            options: registeredUsers.map((user) => ({
-              value: user.fullName || user.email || '',
-              label: user.fullName || user.email || '',
-            })),
           },
         ],
         submitLabel: 'Guardar',

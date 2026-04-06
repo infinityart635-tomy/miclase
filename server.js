@@ -215,7 +215,7 @@ function normalizeState(raw) {
 
 function getPublicState(state) {
   return {
-    users: state.users.map(sanitizeUser),
+    users: [],
     careers: state.careers,
   };
 }
