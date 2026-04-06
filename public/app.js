@@ -11,6 +11,8 @@ const state = {
   showSearchPanel: false,
   showProfileMenu: false,
   searchQuery: '',
+  subjectLibraryQuery: '',
+  subjectLibrarySort: 'favorites',
   subjectMaterialSearchQuery: '',
   currentSubjectFolderId: null,
   selectedMaterialIds: [],
@@ -35,6 +37,8 @@ const state = {
 
 const LAST_CAREER_STORAGE_PREFIX = 'miclase:last-career:';
 const LAST_STUDY_YEAR_STORAGE_PREFIX = 'miclase:last-study-year:';
+const SUBJECT_LIBRARY_PREFS_PREFIX = 'miclase:subject-library:';
+const SUBJECT_FAVORITES_PREFIX = 'miclase:subject-favorites:';
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -44,6 +48,18 @@ function getLastCareerStorageKey() {
 function getLastStudyYearStorageKey() {
   const userId = String(state.user?.id || '').trim();
   return userId ? LAST_STUDY_YEAR_STORAGE_PREFIX + userId : '';
+}
+
+function getSubjectLibraryPrefsKey() {
+  const userId = String(state.user?.id || '').trim();
+  const careerId = String(state.selectedCareerId || '').trim();
+  return userId && careerId ? `${SUBJECT_LIBRARY_PREFS_PREFIX}${userId}:${careerId}` : '';
+}
+
+function getSubjectFavoritesKey(careerId = state.selectedCareerId) {
+  const userId = String(state.user?.id || '').trim();
+  const normalizedCareerId = String(careerId || '').trim();
+  return userId && normalizedCareerId ? `${SUBJECT_FAVORITES_PREFIX}${userId}:${normalizedCareerId}` : '';
 }
 
 function restoreLastCareerPreference() {
@@ -60,6 +76,69 @@ function restoreLastCareerPreference() {
     state.selectedCareerId = null;
     state.selectedStudyYear = '';
     state.selectedSubjectId = null;
+  }
+}
+
+function restoreSubjectLibraryPreferences() {
+  const key = getSubjectLibraryPrefsKey();
+  if (!key) {
+    state.subjectLibraryQuery = '';
+    state.subjectLibrarySort = 'favorites';
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    state.subjectLibraryQuery = typeof parsed.query === 'string' ? parsed.query : '';
+    state.subjectLibrarySort = typeof parsed.sort === 'string' ? parsed.sort : 'favorites';
+  } catch (_) {
+    state.subjectLibraryQuery = '';
+    state.subjectLibrarySort = 'favorites';
+  }
+}
+
+function persistSubjectLibraryPreferences() {
+  const key = getSubjectLibraryPrefsKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({
+      query: state.subjectLibraryQuery || '',
+      sort: state.subjectLibrarySort || 'favorites',
+    }));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function getFavoriteSubjectIds(careerId = state.selectedCareerId) {
+  const key = getSubjectFavoritesKey(careerId);
+  if (!key) return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function isFavoriteSubject(subjectId, careerId = state.selectedCareerId) {
+  return getFavoriteSubjectIds(careerId).includes(subjectId);
+}
+
+function toggleFavoriteSubject(subjectId, careerId = state.selectedCareerId) {
+  const key = getSubjectFavoritesKey(careerId);
+  if (!key || !subjectId) return;
+  try {
+    const next = new Set(getFavoriteSubjectIds(careerId));
+    if (next.has(subjectId)) {
+      next.delete(subjectId);
+    } else {
+      next.add(subjectId);
+    }
+    window.localStorage.setItem(key, JSON.stringify([...next]));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
   }
 }
 
@@ -171,6 +250,7 @@ async function boot() {
   await refreshSession();
   if (state.user) {
     restoreLastCareerPreference();
+    restoreSubjectLibraryPreferences();
     await loadData();
   }
   render();
@@ -543,6 +623,8 @@ function renderTopbar() {
       state.selectedSubjectId = null;
       state.selectedScheduleBoardId = null;
       state.selectedStudyYear = '';
+      state.subjectLibraryQuery = '';
+      state.subjectLibrarySort = 'favorites';
       state.showCreateCareerPanel = false;
       state.showSchedulePanel = false;
       state.showSearchPanel = false;
@@ -1438,6 +1520,7 @@ function renderCareerView(career) {
         </div>
 
         <div class="career-subject-panel-body">
+          ${renderSubjectLibraryToolbar(career, activeYear)}
           <div class="schedule-subject-list">
             ${renderSubjectLibrary(career, activeYear)}
           </div>
@@ -1592,6 +1675,7 @@ function wireCareerListActions() {
       state.selectedCareerId = button.dataset.openCareer;
       state.selectedSubjectId = null;
       persistLastCareerPreference(state.selectedCareerId);
+      restoreSubjectLibraryPreferences();
       const career = (state.db.careers || []).find((item) => item.id === button.dataset.openCareer);
       state.selectedScheduleBoardId = (career?.scheduleBoards || [])[0]?.id || null;
       render();
@@ -1724,6 +1808,50 @@ function wireCareerActions(career) {
       persistLastStudyYearPreference(state.selectedStudyYear);
       state.selectedSubjectId = null;
       state.showCreateSubjectPanel = false;
+      restoreSubjectLibraryPreferences();
+      render();
+    };
+  });
+
+  const subjectLibrarySearchForm = document.getElementById('subjectLibrarySearchForm');
+  if (subjectLibrarySearchForm) {
+    subjectLibrarySearchForm.onsubmit = (event) => {
+      event.preventDefault();
+    };
+  }
+
+  const subjectLibrarySearchInput = document.getElementById('subjectLibrarySearchInput');
+  const clearSubjectLibrarySearch = document.getElementById('clearSubjectLibrarySearch');
+  if (subjectLibrarySearchInput) {
+    subjectLibrarySearchInput.oninput = (event) => {
+      state.subjectLibraryQuery = String(event.currentTarget.value || '').trimStart();
+      persistSubjectLibraryPreferences();
+      clearSubjectLibrarySearch?.classList.toggle('hidden', !state.subjectLibraryQuery.trim());
+      render();
+    };
+  }
+
+  if (clearSubjectLibrarySearch) {
+    clearSubjectLibrarySearch.onclick = () => {
+      state.subjectLibraryQuery = '';
+      persistSubjectLibraryPreferences();
+      render();
+    };
+  }
+
+  document.querySelectorAll('[data-subject-sort]').forEach((button) => {
+    button.onclick = () => {
+      state.subjectLibrarySort = button.dataset.subjectSort || 'favorites';
+      persistSubjectLibraryPreferences();
+      render();
+    };
+  });
+
+  document.querySelectorAll('[data-toggle-favorite-subject]').forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFavoriteSubject(button.dataset.toggleFavoriteSubject, career.id);
       render();
     };
   });
@@ -2692,31 +2820,112 @@ function renderSubjectLibrary(career, activeYear) {
     `;
   }
 
-  return subjects.map((subject) => {
-    const color = getSubjectColor(subject);
+  const query = String(state.subjectLibraryQuery || '').trim().toLowerCase();
+  const favoriteIds = new Set(getFavoriteSubjectIds(career.id));
+  const filtered = subjects.filter((subject) => {
+    if (!query) return true;
+    const haystack = [subject.name, subject.teacher, subject.year].join(' ').toLowerCase();
+    return haystack.includes(query);
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (state.subjectLibrarySort === 'alphabetical') {
+      return a.name.localeCompare(b.name);
+    }
+    if (state.subjectLibrarySort === 'teacher') {
+      const teacherDiff = String(a.teacher || '').localeCompare(String(b.teacher || ''));
+      if (teacherDiff !== 0) return teacherDiff;
+      return a.name.localeCompare(b.name);
+    }
+    const favoriteDiff = Number(favoriteIds.has(b.id)) - Number(favoriteIds.has(a.id));
+    if (favoriteDiff !== 0) return favoriteDiff;
+    return a.name.localeCompare(b.name);
+  });
+
+  if (!sorted.length) {
     return `
-      <article class="subject-library-card" style="--subject-accent:${color.accent};--subject-glow:${color.glow}">
+      <div class="schedule-empty-card">
+        <p class="empty">No encontre materias para esa busqueda.</p>
+      </div>
+    `;
+  }
+
+  return sorted.map((subject) => {
+    const color = getSubjectColor(subject);
+    const isFavorite = favoriteIds.has(subject.id);
+    return `
+      <article class="subject-library-card compact" style="--subject-accent:${color.accent};--subject-glow:${color.glow}">
         <div class="subject-library-swatch"></div>
         <div class="subject-library-body">
           <div class="subject-library-top">
             <div class="subject-library-copy">
               <h5>${escapeHtml(subject.name)}</h5>
-              <p>${escapeHtml(subject.teacher || 'Sin docente')}</p>
+              <p>${escapeHtml(getCompactTeacherName(subject.teacher || 'Sin docente'))}</p>
             </div>
-            <details class="subject-card-menu">
-              <summary class="subject-card-menu-trigger" aria-label="Más opciones">⋯</summary>
-              <div class="subject-card-menu-sheet">
-                <button type="button" class="secondary subject-menu-item" data-edit-subject="${escapeHtml(subject.id)}">Editar</button>
-              </div>
-            </details>
+            <div class="subject-library-side">
+              <button
+                type="button"
+                class="subject-favorite-toggle ${isFavorite ? 'is-active' : ''}"
+                data-toggle-favorite-subject="${escapeHtml(subject.id)}"
+                aria-label="${isFavorite ? 'Quitar de favoritas' : 'Marcar como favorita'}"
+              >★</button>
+              <details class="subject-card-menu">
+                <summary class="subject-card-menu-trigger" aria-label="Más opciones">⋯</summary>
+                <div class="subject-card-menu-sheet">
+                  <button type="button" class="secondary subject-menu-item" data-edit-subject="${escapeHtml(subject.id)}">Editar</button>
+                </div>
+              </details>
+            </div>
           </div>
           <div class="subject-library-actions">
-            <button type="button" class="subject-enter-button" data-open-subject="${escapeHtml(subject.id)}">Entrar</button>
+            <button type="button" class="subject-enter-button compact" data-open-subject="${escapeHtml(subject.id)}">
+              <span>Entrar</span>
+              <span class="subject-enter-arrow" aria-hidden="true">›</span>
+            </button>
           </div>
         </div>
       </article>
     `;
   }).join('');
+}
+
+function renderSubjectLibraryToolbar(career, activeYear) {
+  const subjects = getCareerSubjects(career).filter((subject) => subject.year === activeYear);
+  const favoriteCount = subjects.filter((subject) => isFavoriteSubject(subject.id, career.id)).length;
+  return `
+    <div class="subject-library-toolbar">
+      <div class="subject-library-toolbar-top">
+        <div>
+          <p class="eyebrow">Materias</p>
+          <h4>${subjects.length} cargadas</h4>
+        </div>
+        <span class="subject-library-stat">${favoriteCount} favoritas</span>
+      </div>
+      <form class="subject-library-search" id="subjectLibrarySearchForm">
+        <input
+          id="subjectLibrarySearchInput"
+          name="subjectLibrarySearch"
+          type="search"
+          placeholder="Buscar materia o docente"
+          value="${escapeHtml(state.subjectLibraryQuery || '')}"
+        >
+        <button type="button" class="subject-library-search-clear ${state.subjectLibraryQuery ? '' : 'hidden'}" id="clearSubjectLibrarySearch" aria-label="Limpiar busqueda">×</button>
+      </form>
+      <div class="subject-library-sort">
+        <button type="button" class="${state.subjectLibrarySort === 'favorites' ? '' : 'secondary'}" data-subject-sort="favorites">Favoritas</button>
+        <button type="button" class="${state.subjectLibrarySort === 'alphabetical' ? '' : 'secondary'}" data-subject-sort="alphabetical">A-Z</button>
+        <button type="button" class="${state.subjectLibrarySort === 'teacher' ? '' : 'secondary'}" data-subject-sort="teacher">Docente</button>
+      </div>
+    </div>
+  `;
+}
+
+function getCompactTeacherName(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'Sin docente';
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length <= 2) return normalized;
+  return `${parts.slice(0, 2).join(' ')}…`;
 }
 
 function renderScheduleBoard(career, board, activeYear) {
