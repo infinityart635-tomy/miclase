@@ -245,6 +245,7 @@ boot().catch((error) => {
 });
 
 async function boot() {
+  registerDeviceCache();
   wirePullToRefresh();
   initBrowserBackHandling();
   await refreshSession();
@@ -3828,6 +3829,15 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function registerDeviceCache() {
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Keep the app usable even if the cache worker fails.
+    });
+  }, { once: true });
 }
 
 

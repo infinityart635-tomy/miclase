@@ -579,6 +579,10 @@ app.use((req, res, next) => {
   }
   next();
 });
+app.get("/sw.js", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(path.join(publicDir, "sw.js"));
+});
 app.use(express.static(publicDir));
 app.use("/files", express.static(uploadsDir));
 
