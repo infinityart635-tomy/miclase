@@ -3922,12 +3922,21 @@ function openMaterialViewer(subject, item) {
 
 function handlePdfAction(item) {
   if (hasNativePdfBridge()) {
-    const fileUrl = getNativePdfBridgeUrl(item);
     const fileName = item.originalName || item.title || 'material.pdf';
+    const downloadedBridgeUrl = getDownloadedNativePdfBridgeUrl(item);
     const isDownloaded = isNativePdfDownloaded(item);
     try {
+      if (downloadedBridgeUrl) {
+        window.AndroidPdfBridge.openPdf(downloadedBridgeUrl, fileName);
+        return;
+      }
       if (isDownloaded) {
-        window.AndroidPdfBridge.openPdf(fileUrl, fileName);
+        const itemKey = getMaterialTransferKey(item);
+        const pendingSimulation = itemKey ? nativePdfDownloadSimulations.get(itemKey) : null;
+        if (pendingSimulation) {
+          updateNativePdfDownloadSimulation(itemKey);
+        }
+        setNotice('El PDF se esta preparando. Espera unos segundos.');
         return;
       }
     } catch (_) {
