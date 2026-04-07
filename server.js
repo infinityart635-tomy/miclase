@@ -615,6 +615,11 @@ app.get("/sw.js", (_req, res) => {
 });
 app.use(express.static(publicDir, { index: false }));
 app.use("/files", express.static(uploadsDir));
+app.use("/files", (_req, res) => {
+  res.status(404).json({
+    error: "No encontre ese archivo.",
+  });
+});
 
 app.get("/api/health", async (_req, res) => {
   const database = await getDatabaseHealth();
