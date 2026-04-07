@@ -233,6 +233,12 @@ function getMaterialFileUrl(item) {
   return item?.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
 }
 
+function getMaterialDownloadUrl(item) {
+  const fileUrl = getMaterialFileUrl(item);
+  if (!fileUrl) return '';
+  return `${fileUrl}?download=1`;
+}
+
 function getAbsoluteMaterialFileUrl(item) {
   const relativeUrl = getMaterialFileUrl(item);
   if (!relativeUrl) return '';
@@ -3047,6 +3053,9 @@ function wireCareerActions(career) {
 
   document.querySelectorAll('[data-download-subject-material]').forEach((link) => {
     link.onclick = async (event) => {
+      if (!hasNativePdfBridge()) {
+        return;
+      }
       const subjectRecord = getCareerSubjects(career).find((item) => item.id === link.dataset.subjectId);
       const subjectSource = (career.subjects || []).find((item) => item.id === link.dataset.subjectId) || subjectRecord;
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
@@ -3458,6 +3467,7 @@ function renderScheduleBlock(entry, subject) {
 
 function renderSubjectMaterialCard(career, subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
+  const fileDownloadUrl = getMaterialDownloadUrl(item);
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
@@ -3503,7 +3513,7 @@ function renderSubjectMaterialCard(career, subject, item) {
         ${isPdf && hasFile ? `
             <a
               class="material-quick-download"
-              href="${escapeHtml(fileUrl)}"
+              href="${escapeHtml(fileDownloadUrl)}"
               download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
               data-subject-id="${escapeHtml(subject.id)}"
               data-download-subject-material="${escapeHtml(item.id)}"
@@ -3525,6 +3535,7 @@ function renderSubjectMaterialCard(career, subject, item) {
 
 function renderMaterialViewerContent(subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
+  const fileDownloadUrl = getMaterialDownloadUrl(item);
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
@@ -3552,7 +3563,7 @@ function renderMaterialViewerContent(subject, item) {
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-in>+</button>
             <a
               class="secondary material-viewer-download"
-              href="${escapeHtml(fileUrl)}"
+              href="${escapeHtml(fileDownloadUrl)}"
               download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
               data-open-pdf-direct="true"
             >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
@@ -3944,6 +3955,9 @@ function wireMaterialViewerControls() {
   });
 
   document.querySelector('[data-open-pdf-direct]')?.addEventListener('click', (event) => {
+    if (!hasNativePdfBridge()) {
+      return;
+    }
     const { material } = getViewedMaterialRecord();
     if (!material) return;
     event.preventDefault();

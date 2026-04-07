@@ -701,7 +701,7 @@ function buildUploadFileName(file) {
   return `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
 }
 
-function buildInlineContentDisposition(fileName) {
+function buildContentDisposition(fileName, dispositionType = "inline") {
   const normalizedName =
     String(fileName || "archivo")
       .trim()
@@ -716,7 +716,7 @@ function buildInlineContentDisposition(fileName) {
     /[!'()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
   );
-  return `inline; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
+  return `${dispositionType}; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
 }
 
 function isDescendantFolder(materials, materialId, targetFolderId) {
@@ -781,11 +781,14 @@ app.get("/files/:fileName", async (req, res) => {
       mime.lookup(resolvedName) ||
       mime.lookup(file.fileName) ||
       "application/octet-stream";
+    const dispositionType = String(req.query.download || "").trim() === "1"
+      ? "attachment"
+      : "inline";
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
     res.setHeader("Content-Length", String(file.content.length || 0));
     res.setHeader(
       "Content-Disposition",
-      buildInlineContentDisposition(resolvedName)
+      buildContentDisposition(resolvedName, dispositionType)
     );
     res.type(resolvedMimeType);
     res.send(file.content);

@@ -45,6 +45,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (url.pathname.startsWith('/files/') && url.searchParams.get('download') === '1') {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   if (url.pathname === '/api/session' || url.pathname === '/api/data') {
     event.respondWith(networkFirstWithCache(request, DATA_CACHE));
     return;
