@@ -2936,11 +2936,14 @@ function wireCareerActions(career) {
 
   document.querySelectorAll('[data-download-subject-material]').forEach((link) => {
     link.onclick = async (event) => {
-      event.preventDefault();
       const subjectRecord = getCareerSubjects(career).find((item) => item.id === link.dataset.subjectId);
       const subjectSource = (career.subjects || []).find((item) => item.id === link.dataset.subjectId) || subjectRecord;
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
       if (!material) return;
+      if (isMaterialDownloaded(material)) {
+        return;
+      }
+      event.preventDefault();
       await downloadMaterialFile(material);
     };
   });
@@ -3389,14 +3392,14 @@ function renderSubjectMaterialCard(career, subject, item) {
             >${escapeHtml(fileLabel)}</button>
           ` : ''}
         </div>
-        ${isPdf && hasFile && !isDownloaded ? `
+        ${isPdf && hasFile ? `
           <a
             class="material-quick-download"
             href="${escapeHtml(fileUrl)}"
-            download="${escapeHtml(item.originalName || item.title || 'material')}"
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
-          >Descargar</a>
+            ${isDownloaded ? 'target="_blank" rel="noopener noreferrer"' : `download="${escapeHtml(item.originalName || item.title || 'material')}"`}
+          >${isDownloaded ? 'Abrir' : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3666,7 +3669,14 @@ function triggerBrowserDownload(blob, fileName) {
 function openMaterialFileInNewTab(item) {
   const fileUrl = getMaterialFileUrl(item);
   if (!fileUrl) return;
-  window.open(fileUrl, '_blank', 'noopener,noreferrer');
+  const anchor = document.createElement('a');
+  anchor.href = fileUrl;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
   setNotice('Abriendo PDF.');
 }
 
