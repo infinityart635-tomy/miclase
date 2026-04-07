@@ -19,6 +19,13 @@ const state = {
   notice: '',
   modal: null,
   materialUpload: null,
+  transfer: null,
+  appUpdate: {
+    checking: false,
+    available: false,
+    applying: false,
+    message: '',
+  },
   viewTransition: {
     lastKey: '',
     lastDepth: 0,
@@ -43,6 +50,9 @@ const CACHED_SESSION_STORAGE_KEY = 'miclase:cached-session';
 const CACHED_DATA_STORAGE_PREFIX = 'miclase:cached-data:';
 const LAST_ROUTE_STORAGE_PREFIX = 'miclase:last-route:';
 const OFFLINE_WARM_LIMIT = 18;
+const APP_UPDATE_CHECK_INTERVAL = 60000;
+let swUpdateCheckTimer = 0;
+let hasReloadedForUpdate = false;
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -525,6 +535,20 @@ async function loadData() {
 
 async function refreshAppData() {
   render();
+  if ('serviceWorker' in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (registration) {
+        await registration.update();
+        if (registration.waiting) {
+          await applyServiceWorkerUpdate(registration);
+          return;
+        }
+      }
+    } catch (_) {
+      // Fallback to a normal reload below.
+    }
+  }
   window.location.reload();
 }
 
@@ -707,6 +731,53 @@ function setNotice(text) {
       }
     }, 2500);
   }
+}
+
+function setTransferState(nextTransfer) {
+  state.transfer = nextTransfer ? { ...nextTransfer } : null;
+  render();
+}
+
+function clearTransferState() {
+  state.transfer = null;
+  render();
+}
+
+function setAppUpdateState(nextState) {
+  state.appUpdate = {
+    ...state.appUpdate,
+    ...nextState,
+  };
+  render();
+}
+
+function renderStatusBanners() {
+  const banners = [];
+  if (state.appUpdate.message) {
+    banners.push(`
+      <div class="status-banner status-banner-update ${state.appUpdate.applying ? 'is-busy' : ''}">
+        <strong>${escapeHtml(state.appUpdate.message)}</strong>
+      </div>
+    `);
+  }
+  if (state.transfer?.active) {
+    const progress = Math.max(0, Math.min(100, Number(state.transfer.progress || 0)));
+    banners.push(`
+      <div class="status-banner status-banner-transfer">
+        <div class="status-banner-head">
+          <strong>${escapeHtml(state.transfer.label || 'Descargando archivo')}</strong>
+          <span>${state.transfer.indeterminate ? 'Preparando...' : `${Math.round(progress)}%`}</span>
+        </div>
+        <div class="status-progress ${state.transfer.indeterminate ? 'is-indeterminate' : ''}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}">
+          <span class="status-progress-fill" style="width:${Math.max(6, progress)}%"></span>
+        </div>
+      </div>
+    `);
+  }
+  if (state.notice) {
+    banners.push(`<div class="notice">${escapeHtml(state.notice)}</div>`);
+  }
+  return banners.join('');
 }
 
 function render() {
@@ -995,7 +1066,7 @@ function getUserInitials(name) {
 
 function renderLogin() {
   app.innerHTML = `
-    ${state.notice ? `<div class="notice">${escapeHtml(state.notice)}</div>` : ''}
+    ${renderStatusBanners()}
     ${loginMarkup}
   `;
   syncAuthDraftToInputs();
@@ -1235,7 +1306,7 @@ function renderDashboard() {
   const transitionClass = transitionDirection ? `screen-transition screen-transition-${transitionDirection}` : '';
 
   app.innerHTML = `
-    ${state.notice ? `<div class="notice">${escapeHtml(state.notice)}</div>` : ''}
+    ${renderStatusBanners()}
     <div class="dashboard-stack ${transitionClass}" data-screen-key="${escapeHtml(viewSnapshot.key)}">
       ${selected ? renderCareerView(selected) : renderCareerList(careers)}
     </div>
@@ -2822,8 +2893,13 @@ function wireCareerActions(career) {
   });
 
   document.querySelectorAll('[data-download-subject-material]').forEach((link) => {
-    link.onclick = () => {
-      setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+    link.onclick = async (event) => {
+      event.preventDefault();
+      const subjectRecord = getCareerSubjects(career).find((item) => item.id === link.dataset.subjectId);
+      const subjectSource = (career.subjects || []).find((item) => item.id === link.dataset.subjectId) || subjectRecord;
+      const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
+      if (!material) return;
+      await downloadMaterialFile(material);
     };
   });
 
@@ -3275,6 +3351,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             class="material-quick-download"
             href="${escapeHtml(fileUrl)}"
             download="${escapeHtml(item.originalName || item.title || 'material')}"
+            data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
           >Descargar</a>
         ` : ''}
@@ -3407,8 +3484,7 @@ function getMaterialFileExtensionLabel(item) {
 
 function openMaterialViewer(subject, item) {
   if (isMaterialPdf(item) && item?.fileName) {
-    triggerMaterialDownload(item);
-    setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+    downloadMaterialFile(item);
     return;
   }
   warmCachedMaterialResource(item);
@@ -3454,17 +3530,81 @@ function openMaterialViewer(subject, item) {
   render();
 }
 
-function triggerMaterialDownload(item) {
+async function downloadMaterialFile(item) {
   if (!item?.fileName) return;
   const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
+  const fileName = item.originalName || item.title || 'material';
+  setTransferState({
+    active: true,
+    label: `Descargando ${fileName}`,
+    progress: 4,
+    indeterminate: true,
+  });
+  try {
+    const response = await fetch(fileUrl, { credentials: 'same-origin' });
+    if (!response.ok) {
+      throw new Error('No se pudo descargar el archivo.');
+    }
+    const total = Number(response.headers.get('content-length') || 0);
+    if (!response.body || !window.ReadableStream) {
+      const blob = await response.blob();
+      triggerBrowserDownload(blob, fileName);
+      clearTransferState();
+      setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        loaded += value.byteLength;
+        if (total > 0) {
+          setTransferState({
+            active: true,
+            label: `Descargando ${fileName}`,
+            progress: (loaded / total) * 100,
+            indeterminate: false,
+          });
+        } else {
+          setTransferState({
+            active: true,
+            label: `Descargando ${fileName}`,
+            progress: 55,
+            indeterminate: true,
+          });
+        }
+      }
+    }
+
+    const blob = new Blob(chunks, {
+      type: response.headers.get('content-type') || 'application/octet-stream',
+    });
+    triggerBrowserDownload(blob, fileName);
+    clearTransferState();
+    setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+  } catch (error) {
+    clearTransferState();
+    setNotice(error.message || 'No se pudo descargar el archivo.');
+  }
+}
+
+function triggerBrowserDownload(blob, fileName) {
+  const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
-  anchor.href = fileUrl;
-  anchor.download = item.originalName || item.title || 'material';
+  anchor.href = objectUrl;
+  anchor.download = fileName;
   anchor.rel = 'noopener';
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 function openMaterialUploadModal() {
@@ -4064,12 +4204,134 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+async function checkForServiceWorkerUpdate(registration, options = {}) {
+  if (!registration) return;
+  const { silent = true } = options;
+  if (!silent && !state.appUpdate.applying) {
+    setAppUpdateState({
+      checking: true,
+      available: false,
+      message: 'Buscando actualización...',
+    });
+  }
+  try {
+    await registration.update();
+  } catch (_) {
+    if (!silent && !state.appUpdate.applying) {
+      setAppUpdateState({
+        checking: false,
+        available: false,
+        message: '',
+      });
+    }
+  }
+}
+
+async function applyServiceWorkerUpdate(registration) {
+  if (!registration?.waiting || state.appUpdate.applying) return;
+  setAppUpdateState({
+    checking: false,
+    available: true,
+    applying: true,
+    message: 'Hay una actualización. Aplicando cambios...',
+  });
+  registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+  window.setTimeout(() => {
+    if (!hasReloadedForUpdate) {
+      hasReloadedForUpdate = true;
+      window.location.reload();
+    }
+  }, 1800);
+}
+
+function handleServiceWorkerWaiting(registration) {
+  setAppUpdateState({
+    checking: false,
+    available: true,
+    applying: false,
+    message: 'Hay una actualización. Se instalará ahora...',
+  });
+  window.setTimeout(() => {
+    applyServiceWorkerUpdate(registration);
+  }, 800);
+}
+
+function monitorServiceWorkerRegistration(registration) {
+  if (!registration) return;
+  if (registration.waiting) {
+    handleServiceWorkerWaiting(registration);
+  }
+  registration.addEventListener('updatefound', () => {
+    const installingWorker = registration.installing;
+    if (!installingWorker) return;
+    if (navigator.serviceWorker.controller) {
+      setAppUpdateState({
+        checking: true,
+        available: false,
+        applying: false,
+        message: 'Descargando actualización...',
+      });
+    }
+    installingWorker.addEventListener('statechange', () => {
+      if (installingWorker.state === 'installed') {
+        if (navigator.serviceWorker.controller) {
+          handleServiceWorkerWaiting(registration);
+          return;
+        }
+        setAppUpdateState({
+          checking: false,
+          available: false,
+          applying: false,
+          message: '',
+        });
+      }
+      if (installingWorker.state === 'redundant' && !state.appUpdate.applying) {
+        setAppUpdateState({
+          checking: false,
+          available: false,
+          applying: false,
+          message: '',
+        });
+      }
+    });
+  });
+}
+
+function scheduleServiceWorkerUpdateChecks(registration) {
+  if (!registration) return;
+  if (swUpdateCheckTimer) {
+    window.clearInterval(swUpdateCheckTimer);
+  }
+  swUpdateCheckTimer = window.setInterval(() => {
+    checkForServiceWorkerUpdate(registration);
+  }, APP_UPDATE_CHECK_INTERVAL);
+  window.addEventListener('focus', () => {
+    checkForServiceWorkerUpdate(registration);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      checkForServiceWorkerUpdate(registration);
+    }
+  });
+}
+
 function registerDeviceCache() {
   if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hasReloadedForUpdate) return;
+    hasReloadedForUpdate = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      // Keep the app usable even if the cache worker fails.
-    });
+    navigator.serviceWorker.register('/sw.js')
+      .then((registration) => {
+        monitorServiceWorkerRegistration(registration);
+        scheduleServiceWorkerUpdateChecks(registration);
+        checkForServiceWorkerUpdate(registration);
+      })
+      .catch(() => {
+        // Keep the app usable even if the cache worker fails.
+      });
   }, { once: true });
 }
 

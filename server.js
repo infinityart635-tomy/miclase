@@ -14,6 +14,8 @@ const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const uploadsDir = path.join(__dirname, "uploads");
 const dataFile = path.join(dataDir, "db.json");
+const indexFile = path.join(publicDir, "index.html");
+const swFile = path.join(publicDir, "sw.js");
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 const hasDatabase = Boolean(databaseUrl);
 const SESSION_SECRET =
@@ -31,6 +33,33 @@ const CAREER_COLORS = [
 
 let pool = null;
 let appStateCache = { users: [], careers: [] };
+
+function getAppVersion() {
+  const watchedFiles = [
+    __filename,
+    indexFile,
+    path.join(publicDir, "app.js"),
+    path.join(publicDir, "styles.css"),
+    swFile,
+  ];
+  const signature = watchedFiles
+    .map((filePath) => {
+      try {
+        const stats = fs.statSync(filePath);
+        return `${path.basename(filePath)}:${stats.size}:${Math.floor(stats.mtimeMs)}`;
+      } catch (_) {
+        return `${path.basename(filePath)}:missing`;
+      }
+    })
+    .join("|");
+  return crypto.createHash("sha1").update(signature).digest("hex").slice(0, 12);
+}
+
+function renderPublicTemplate(filePath) {
+  const version = getAppVersion();
+  const source = fs.readFileSync(filePath, "utf8");
+  return source.replaceAll("__APP_VERSION__", version);
+}
 
 app.set("trust proxy", 1);
 
@@ -581,9 +610,10 @@ app.use((req, res, next) => {
 });
 app.get("/sw.js", (_req, res) => {
   res.setHeader("Cache-Control", "no-cache");
-  res.sendFile(path.join(publicDir, "sw.js"));
+  res.type("application/javascript");
+  res.send(renderPublicTemplate(swFile));
 });
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, { index: false }));
 app.use("/files", express.static(uploadsDir));
 
 app.get("/api/health", async (_req, res) => {
@@ -599,11 +629,20 @@ app.get("/api/health", async (_req, res) => {
 app.get("/api/config", (_req, res) => {
   res.json({
     appName: "MiClase",
+    version: getAppVersion(),
     environment: process.env.NODE_ENV || "development",
     database: {
       provider: "postgres",
       configured: hasDatabase,
     },
+  });
+});
+
+app.get("/api/version", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.json({
+    version: getAppVersion(),
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -1217,7 +1256,9 @@ app.get("/{*any}", (req, res, next) => {
     next();
     return;
   }
-  res.sendFile(path.join(publicDir, "index.html"));
+  res.setHeader("Cache-Control", "no-cache");
+  res.type("html");
+  res.send(renderPublicTemplate(indexFile));
 });
 
 app.use((req, res) => {

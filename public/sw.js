@@ -1,6 +1,7 @@
-const SHELL_CACHE = 'miclase-shell-v2';
-const DATA_CACHE = 'miclase-data-v2';
-const CONTENT_CACHE = 'miclase-content-v2';
+const APP_VERSION = '__APP_VERSION__';
+const SHELL_CACHE = `miclase-shell-${APP_VERSION}`;
+const DATA_CACHE = `miclase-data-${APP_VERSION}`;
+const CONTENT_CACHE = `miclase-content-${APP_VERSION}`;
 const SHELL_PATHS = ['/', '/index.html', '/styles.css', '/app.js'];
 
 self.addEventListener('install', (event) => {
@@ -22,6 +23,10 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
   if (event.data?.type === 'CACHE_URLS') {
     const urls = Array.isArray(event.data.urls) ? event.data.urls.filter(Boolean) : [];
     event.waitUntil(cacheUrls(urls));
