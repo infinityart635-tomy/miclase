@@ -2460,6 +2460,17 @@ th, td {
   width: max-content;
   padding: 18px 12px 28px;
 }
+.material-native-pdf-preview {
+  min-height: min(52vh, 440px);
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.material-native-pdf-open-btn {
+  min-width: 180px;
+}
 .material-pdf-loading {
   color: var(--muted);
   font-size: 0.92rem;

@@ -56,6 +56,8 @@ const APP_UPDATE_CHECK_INTERVAL = 60000;
 let swUpdateCheckTimer = 0;
 let hasReloadedForUpdate = false;
 let transferResetTimer = 0;
+const nativePdfDownloadSimulations = new Map();
+const nativePdfDurationCache = new Map();
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -174,6 +176,15 @@ function markMaterialAsDownloaded(item) {
   persistDownloadedMaterials(downloaded);
 }
 
+function unmarkMaterialAsDownloaded(item) {
+  const fileName = String(item?.fileName || '').trim();
+  if (!fileName) return;
+  const downloaded = restoreDownloadedMaterials();
+  if (!downloaded.has(fileName)) return;
+  downloaded.delete(fileName);
+  persistDownloadedMaterials(downloaded);
+}
+
 function findMaterialByFileUrl(url) {
   const rawUrl = String(url || '').trim();
   if (!rawUrl) return null;
@@ -245,12 +256,128 @@ function cancelTransferStateClear() {
   transferResetTimer = 0;
 }
 
-function scheduleTransferStateClear(delay = 1200) {
+function scheduleTransferStateClear(delay = 1200, transferKey = '') {
   cancelTransferStateClear();
   transferResetTimer = window.setTimeout(() => {
     transferResetTimer = 0;
+    if (transferKey && state.transfer?.key && state.transfer.key !== transferKey) {
+      return;
+    }
     clearTransferState();
   }, delay);
+}
+
+function getMaterialTransferKey(item) {
+  return String(item?.fileName || item?.id || '').trim();
+}
+
+function getNativePdfSimulationTransferKey(item) {
+  const key = getMaterialTransferKey(item);
+  return key ? `native-pdf:${key}` : '';
+}
+
+function computeNativePdfSimulationDuration(fileSize = 0) {
+  const size = Number(fileSize || 0);
+  if (!(size > 0)) return 12000;
+  const duration = 10000 + Math.round((size / (1024 * 1024)) * 1200);
+  return Math.max(10000, Math.min(20000, duration));
+}
+
+async function resolveMaterialFileSize(item) {
+  const cacheKey = getMaterialTransferKey(item);
+  if (cacheKey && nativePdfDurationCache.has(cacheKey)) {
+    return nativePdfDurationCache.get(cacheKey);
+  }
+  const declaredSize = Number(item?.fileSize || 0);
+  if (declaredSize > 0) {
+    if (cacheKey) nativePdfDurationCache.set(cacheKey, declaredSize);
+    return declaredSize;
+  }
+  const urls = [getAbsoluteMaterialDownloadUrl(item), getAbsoluteMaterialFileUrl(item)].filter(Boolean);
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: 'HEAD',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) continue;
+      const rawLength = Number(response.headers.get('content-length') || 0);
+      if (rawLength > 0) {
+        if (cacheKey) nativePdfDurationCache.set(cacheKey, rawLength);
+        return rawLength;
+      }
+    } catch (_) {
+      // Ignore probe failures and keep the optimistic timer running.
+    }
+  }
+  return 0;
+}
+
+function stopNativePdfDownloadSimulation(itemOrKey, { clearTransfer = false } = {}) {
+  const key = typeof itemOrKey === 'string' ? itemOrKey : getMaterialTransferKey(itemOrKey);
+  if (!key) return;
+  const session = nativePdfDownloadSimulations.get(key);
+  if (!session) return;
+  if (session.intervalId) {
+    window.clearInterval(session.intervalId);
+  }
+  nativePdfDownloadSimulations.delete(key);
+  if (clearTransfer && state.transfer?.key === session.transferKey) {
+    clearTransferState();
+  }
+}
+
+function updateNativePdfDownloadSimulation(itemKey) {
+  const session = nativePdfDownloadSimulations.get(itemKey);
+  if (!session) return;
+  const elapsed = Date.now() - session.startedAt;
+  const duration = Math.max(1000, session.durationMs || 12000);
+  const ratio = Math.max(0, Math.min(1, elapsed / duration));
+  const progress = Math.round(8 + (ratio * 92));
+  setTransferState({
+    active: true,
+    key: session.transferKey,
+    label: session.label,
+    progress,
+    indeterminate: false,
+  });
+  if (ratio >= 1) {
+    stopNativePdfDownloadSimulation(itemKey);
+    setTransferState({
+      active: true,
+      key: session.transferKey,
+      label: `PDF listo para abrir: ${session.fileName}`,
+      progress: 100,
+      indeterminate: false,
+    });
+    scheduleTransferStateClear(1500, session.transferKey);
+  }
+}
+
+function startNativePdfDownloadSimulation(item) {
+  const itemKey = getMaterialTransferKey(item);
+  if (!itemKey) return;
+  stopNativePdfDownloadSimulation(itemKey);
+  markMaterialAsDownloaded(item);
+  const fileName = item.originalName || item.title || item.fileName || 'material.pdf';
+  const session = {
+    fileName,
+    label: `Descargando ${fileName}`,
+    startedAt: Date.now(),
+    durationMs: 12000,
+    transferKey: getNativePdfSimulationTransferKey(item),
+    intervalId: 0,
+  };
+  nativePdfDownloadSimulations.set(itemKey, session);
+  updateNativePdfDownloadSimulation(itemKey);
+  session.intervalId = window.setInterval(() => {
+    updateNativePdfDownloadSimulation(itemKey);
+  }, 250);
+  resolveMaterialFileSize(item).then((fileSize) => {
+    const activeSession = nativePdfDownloadSimulations.get(itemKey);
+    if (!activeSession) return;
+    activeSession.durationMs = computeNativePdfSimulationDuration(fileSize);
+  });
 }
 
 function restoreLastRoute() {
@@ -3630,6 +3757,7 @@ function renderMaterialViewerContent(subject, item) {
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
   const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
+  const useNativePdfViewer = hasNativePdfBridge() && isPdf && isDownloaded;
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3659,13 +3787,20 @@ function renderMaterialViewerContent(subject, item) {
             >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
           </div>
           <div class="material-viewer-stage is-pdf">
-            <div
-              class="material-preview material-viewer-preview material-pdf-canvas-viewer"
-              data-pdf-canvas-viewer
-              data-pdf-src="${escapeHtml(fileUrl)}"
-            >
-              <div class="material-pdf-loading">Cargando PDF...</div>
-            </div>
+            ${useNativePdfViewer ? `
+              <div class="material-preview material-viewer-preview material-native-pdf-preview">
+                <p class="meta">Este PDF ya esta guardado en tu dispositivo.</p>
+                <button type="button" class="secondary material-native-pdf-open-btn" data-open-pdf-direct="true">Abrir PDF descargado</button>
+              </div>
+            ` : `
+              <div
+                class="material-preview material-viewer-preview material-pdf-canvas-viewer"
+                data-pdf-canvas-viewer
+                data-pdf-src="${escapeHtml(fileUrl)}"
+              >
+                <div class="material-pdf-loading">Cargando PDF...</div>
+              </div>
+            `}
           </div>
         </section>
       ` : isImage ? `
@@ -3740,7 +3875,9 @@ function getMaterialFileExtensionLabel(item) {
 }
 
 function openMaterialViewer(subject, item) {
-  warmCachedMaterialResource(item);
+  if (!(hasNativePdfBridge() && isMaterialPdf(item) && isNativePdfDownloaded(item))) {
+    warmCachedMaterialResource(item);
+  }
   if (item?.itemType === 'link') {
     const linkUrl = normalizeExternalUrl(item.content || '');
     if (linkUrl) {
@@ -3805,15 +3942,21 @@ function downloadMaterialFile(item) {
   const fileUrl = getAbsoluteMaterialDownloadUrl(item);
   const fileName = item.originalName || item.title || item.fileName || 'material';
   if (!fileUrl) return;
-  cancelTransferStateClear();
-  setTransferState({
-    active: true,
-    label: `Descargando ${fileName}`,
-    progress: 12,
-    indeterminate: true,
-  });
+  if (hasNativePdfBridge() && isMaterialPdf(item)) {
+    startNativePdfDownloadSimulation(item);
+  } else {
+    cancelTransferStateClear();
+    setTransferState({
+      active: true,
+      label: `Descargando ${fileName}`,
+      progress: 12,
+      indeterminate: true,
+    });
+  }
   triggerBrowserDownload(fileUrl, fileName);
-  scheduleTransferStateClear();
+  if (!(hasNativePdfBridge() && isMaterialPdf(item))) {
+    scheduleTransferStateClear();
+  }
   setNotice('Descarga iniciada.');
 }
 
@@ -4015,14 +4158,16 @@ function wireMaterialViewerControls() {
     });
   });
 
-  document.querySelector('[data-open-pdf-direct]')?.addEventListener('click', (event) => {
-    if (!hasNativePdfBridge()) {
-      return;
-    }
-    const { material } = getViewedMaterialRecord();
-    if (!material) return;
-    event.preventDefault();
-    handlePdfAction(material);
+  document.querySelectorAll('[data-open-pdf-direct]').forEach((control) => {
+    control.addEventListener('click', (event) => {
+      if (!hasNativePdfBridge()) {
+        return;
+      }
+      const { material } = getViewedMaterialRecord();
+      if (!material) return;
+      event.preventDefault();
+      handlePdfAction(material);
+    });
   });
 
   const pdfViewer = document.querySelector('[data-pdf-canvas-viewer]');
@@ -4649,7 +4794,22 @@ function initNativePdfBridge() {
     const status = String(detail.status || '');
     const message = String(detail.message || '');
     const progress = Number(detail.progress || 0);
+    const material = findMaterialByFileUrl(detail.url || '');
+    const materialKey = getMaterialTransferKey(material);
     if (status === 'started' || status === 'downloading') {
+      if (materialKey && nativePdfDownloadSimulations.has(materialKey)) {
+        const session = nativePdfDownloadSimulations.get(materialKey);
+        if (session && progress > 0) {
+          setTransferState({
+            active: true,
+            key: session.transferKey,
+            label: message || session.label,
+            progress: Math.max(progress, Math.min(98, Number(state.transfer?.progress || 0))),
+            indeterminate: false,
+          });
+        }
+        return;
+      }
       setTransferState({
         active: true,
         label: message || 'Descargando PDF',
@@ -4659,9 +4819,9 @@ function initNativePdfBridge() {
       return;
     }
     if (status === 'completed') {
-      const material = findMaterialByFileUrl(detail.url || '');
       if (material) {
         markMaterialAsDownloaded(material);
+        stopNativePdfDownloadSimulation(material, { clearTransfer: true });
       }
       syncDownloadedNativePdfs();
       clearTransferState();
@@ -4670,9 +4830,9 @@ function initNativePdfBridge() {
       return;
     }
     if (status === 'opened') {
-      const material = findMaterialByFileUrl(detail.url || '');
       if (material) {
         markMaterialAsDownloaded(material);
+        stopNativePdfDownloadSimulation(material, { clearTransfer: true });
       }
       syncDownloadedNativePdfs();
       clearTransferState();
@@ -4681,8 +4841,15 @@ function initNativePdfBridge() {
       return;
     }
     if (status === 'error') {
+      if (material) {
+        stopNativePdfDownloadSimulation(material, { clearTransfer: true });
+        if (!getDownloadedNativePdfBridgeUrl(material)) {
+          unmarkMaterialAsDownloaded(material);
+        }
+      }
       clearTransferState();
       setNotice(message || 'No se pudo descargar el PDF.');
+      render();
     }
   });
 }
