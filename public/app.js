@@ -48,6 +48,7 @@ const LAST_STUDY_YEAR_STORAGE_PREFIX = 'miclase:last-study-year:';
 const SUBJECT_LIBRARY_PREFS_PREFIX = 'miclase:subject-library:';
 const SUBJECT_FAVORITES_PREFIX = 'miclase:subject-favorites:';
 const DOWNLOADED_MATERIALS_PREFIX = 'miclase:downloaded-materials:';
+const PENDING_NATIVE_PDFS_PREFIX = 'miclase:pending-native-pdfs:';
 const CACHED_SESSION_STORAGE_KEY = 'miclase:cached-session';
 const CACHED_DATA_STORAGE_PREFIX = 'miclase:cached-data:';
 const LAST_ROUTE_STORAGE_PREFIX = 'miclase:last-route:';
@@ -92,6 +93,11 @@ function getCachedDataStorageKey() {
 function getDownloadedMaterialsStorageKey() {
   const userId = String(state.user?.id || '').trim();
   return userId ? `${DOWNLOADED_MATERIALS_PREFIX}${userId}` : '';
+}
+
+function getPendingNativePdfsStorageKey() {
+  const userId = String(state.user?.id || '').trim();
+  return userId ? `${PENDING_NATIVE_PDFS_PREFIX}${userId}` : '';
 }
 
 function getLastRouteStorageKey() {
@@ -165,6 +171,37 @@ function persistDownloadedMaterials(downloaded) {
   }
 }
 
+function restorePendingNativePdfDownloads() {
+  const key = getPendingNativePdfsStorageKey();
+  if (!key) return {};
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    const next = {};
+    Object.entries(parsed && typeof parsed === 'object' ? parsed : {}).forEach(([entryKey, expiresAt]) => {
+      const expiry = Number(expiresAt || 0);
+      if (entryKey && expiry > now) {
+        next[entryKey] = expiry;
+      }
+    });
+    window.localStorage.setItem(key, JSON.stringify(next));
+    return next;
+  } catch (_) {
+    return {};
+  }
+}
+
+function persistPendingNativePdfDownloads(entries) {
+  const key = getPendingNativePdfsStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(entries || {}));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
 function isMaterialDownloaded(item) {
   const fileName = String(item?.fileName || '').trim();
   if (!fileName) return false;
@@ -230,6 +267,9 @@ function syncDownloadedNativePdfs() {
           downloaded.add(fileName);
           changed = true;
         }
+        if (downloadedByBridge) {
+          clearPendingNativePdfDownload(material);
+        }
       }
     }
   }
@@ -282,22 +322,33 @@ function clearPendingNativePdfDownload(itemOrKey) {
     window.clearTimeout(timerId);
   }
   nativePdfPendingDownloads.delete(key);
+  const pending = restorePendingNativePdfDownloads();
+  if (pending[key]) {
+    delete pending[key];
+    persistPendingNativePdfDownloads(pending);
+  }
 }
 
 function markPendingNativePdfDownload(item) {
   const key = getMaterialTransferKey(item);
   if (!key) return '';
+  const expiresAt = Date.now() + NATIVE_PDF_REQUEST_TIMEOUT_MS;
   clearPendingNativePdfDownload(key);
   const timerId = window.setTimeout(() => {
-    nativePdfPendingDownloads.delete(key);
+    clearPendingNativePdfDownload(key);
   }, NATIVE_PDF_REQUEST_TIMEOUT_MS);
   nativePdfPendingDownloads.set(key, timerId);
+  const pending = restorePendingNativePdfDownloads();
+  pending[key] = expiresAt;
+  persistPendingNativePdfDownloads(pending);
   return key;
 }
 
 function isPendingNativePdfDownload(item) {
   const key = getMaterialTransferKey(item);
-  return Boolean(key) && nativePdfPendingDownloads.has(key);
+  if (!key) return false;
+  if (nativePdfPendingDownloads.has(key)) return true;
+  return Boolean(restorePendingNativePdfDownloads()[key]);
 }
 
 function getNativePdfSimulationTransferKey(item) {
@@ -3727,6 +3778,8 @@ function renderSubjectMaterialCard(career, subject, item) {
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
   const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
+  const isPendingPdfDownload = hasNativePdfBridge() && isPdf && isPendingNativePdfDownload(item);
+  const pdfActionLabel = isPendingPdfDownload ? 'Descargando...' : (isDownloaded ? 'Abrir PDF' : 'Descargar');
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3771,7 +3824,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             href="${escapeHtml(fileUrl)}"
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
-          >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
+          >${pdfActionLabel}</a>
         ` : ''}
         <button
           type="button"
@@ -3793,6 +3846,8 @@ function renderMaterialViewerContent(subject, item) {
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
   const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
+  const isPendingPdfDownload = hasNativePdfBridge() && isPdf && isPendingNativePdfDownload(item);
+  const pdfActionLabel = isPendingPdfDownload ? 'Descargando...' : (isDownloaded ? 'Abrir PDF' : 'Descargar');
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3818,7 +3873,7 @@ function renderMaterialViewerContent(subject, item) {
               class="secondary material-viewer-download"
               href="${escapeHtml(fileUrl)}"
               data-open-pdf-direct="true"
-            >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
+            >${pdfActionLabel}</a>
           </div>
           <div class="material-viewer-stage is-pdf">
             <div
