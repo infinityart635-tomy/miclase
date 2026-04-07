@@ -242,10 +242,12 @@ function findMaterialByFileUrl(url) {
         if (!material?.fileName) continue;
         const absoluteFileUrl = getAbsoluteMaterialFileUrl(material);
         const absoluteDownloadUrl = getAbsoluteMaterialDownloadUrl(material);
+        const materialFileName = String(material.fileName || '').trim();
+        const materialOriginalName = String(material.originalName || '').trim();
         if (
           rawUrl === absoluteFileUrl
           || rawUrl === absoluteDownloadUrl
-          || (rawFileName && rawFileName === String(material.fileName || '').trim())
+          || (rawFileName && (rawFileName === materialFileName || rawFileName === materialOriginalName))
         ) {
           return material;
         }
@@ -376,8 +378,6 @@ function searchAndOpenNativePdf(item) {
     setNotice('Buscando PDF descargado...');
     return;
   }
-  const fileUrl = getAbsoluteMaterialFileUrl(item);
-  const fileName = item.originalName || item.title || 'material.pdf';
   let attempts = 0;
   const maxAttempts = 8;
   const intervalMs = 600;
@@ -402,7 +402,9 @@ function searchAndOpenNativePdf(item) {
       }
       render();
       try {
-        window.AndroidPdfBridge.openPdf(fileUrl, fileName);
+        if (!openNativePdfWithBridge(item)) {
+          throw new Error('native-open-missing-url');
+        }
       } catch (_) {
         setNotice('No pude abrir el PDF todavia.');
       }
@@ -656,13 +658,28 @@ function getNativePdfBridgeUrl(item) {
     || '';
 }
 
+function getNativePdfFileName(item) {
+  return item?.originalName || item?.fileName || item?.title || 'material.pdf';
+}
+
 function isNativePdfDownloaded(item) {
-  if (!hasNativePdfBridge() || !isMaterialPdf(item)) return false;
-  try {
-    return Boolean(window.AndroidPdfBridge.isPdfDownloaded(getAbsoluteMaterialFileUrl(item)));
-  } catch (_) {
-    return false;
-  }
+  return hasNativePdfBridge() && isMaterialPdf(item) && Boolean(getDownloadedNativePdfBridgeUrl(item));
+}
+
+function openNativePdfWithBridge(item) {
+  if (!hasNativePdfBridge()) return false;
+  const fileUrl = getNativePdfBridgeUrl(item);
+  if (!fileUrl) return false;
+  window.AndroidPdfBridge.openPdf(fileUrl, getNativePdfFileName(item));
+  return true;
+}
+
+function downloadNativePdfWithBridge(item) {
+  if (!hasNativePdfBridge()) return false;
+  const fileUrl = getAbsoluteMaterialDownloadUrl(item) || getAbsoluteMaterialFileUrl(item);
+  if (!fileUrl) return false;
+  window.AndroidPdfBridge.downloadPdf(fileUrl, getNativePdfFileName(item));
+  return true;
 }
 
 function postCacheMessage(type, payload = {}) {
@@ -4108,8 +4125,6 @@ function openMaterialViewer(subject, item) {
 
 function handlePdfAction(item) {
   if (hasNativePdfBridge()) {
-    const fileUrl = getAbsoluteMaterialFileUrl(item);
-    const fileName = item.originalName || item.title || 'material.pdf';
     const isDownloaded = isNativePdfDownloaded(item);
     const transferKey = getNativePdfSimulationTransferKey(item);
     const isOptimisticReady = isNativePdfOptimisticallyReady(item);
@@ -4119,7 +4134,9 @@ function handlePdfAction(item) {
         if (state.transfer?.key === transferKey) {
           clearTransferState();
         }
-        window.AndroidPdfBridge.openPdf(fileUrl, fileName);
+        if (!openNativePdfWithBridge(item)) {
+          throw new Error('native-open-missing-url');
+        }
         return;
       }
       if (isOptimisticReady) {
@@ -4133,7 +4150,9 @@ function handlePdfAction(item) {
       startNativePdfDownloadSimulation(item);
       markPendingNativePdfDownload(item);
       watchPendingNativePdfDownload(item);
-      window.AndroidPdfBridge.downloadPdf(fileUrl, fileName);
+      if (!downloadNativePdfWithBridge(item)) {
+        throw new Error('native-download-missing-url');
+      }
       return;
     } catch (_) {
       clearPendingNativePdfDownload(item);
