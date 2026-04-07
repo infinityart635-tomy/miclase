@@ -3951,7 +3951,8 @@ function downloadMaterialFile(item) {
   const fileUrl = getAbsoluteMaterialDownloadUrl(item);
   const fileName = item.originalName || item.title || item.fileName || 'material';
   if (!fileUrl) return;
-  if (hasNativePdfBridge() && isMaterialPdf(item)) {
+  const useNativePdfDownload = hasNativePdfBridge() && isMaterialPdf(item);
+  if (useNativePdfDownload) {
     startNativePdfDownloadSimulation(item);
   } else {
     cancelTransferStateClear();
@@ -3962,11 +3963,21 @@ function downloadMaterialFile(item) {
       indeterminate: true,
     });
   }
-  triggerBrowserDownload(fileUrl, fileName);
-  if (!(hasNativePdfBridge() && isMaterialPdf(item))) {
+  if (useNativePdfDownload) {
+    triggerNativePdfDownload(fileUrl);
+  } else {
+    triggerBrowserDownload(fileUrl, fileName);
     scheduleTransferStateClear();
   }
   setNotice('Descarga iniciada.');
+}
+
+function triggerNativePdfDownload(fileUrl) {
+  try {
+    window.location.assign(fileUrl);
+  } catch (_) {
+    triggerBrowserDownload(fileUrl, 'material.pdf');
+  }
 }
 
 function triggerBrowserDownload(fileUrl, fileName) {
