@@ -3366,6 +3366,7 @@ function renderSubjectMaterialCard(career, subject, item) {
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
   const isDownloaded = isMaterialDownloaded(item);
+  const isAndroid = /android/i.test(navigator.userAgent || '');
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3411,7 +3412,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
             ${isDownloaded ? 'target="_blank" rel="noopener noreferrer"' : `download="${escapeHtml(item.originalName || item.title || 'material')}"`}
-          >${isDownloaded ? 'Abrir con...' : 'Descargar'}</a>
+          >${isDownloaded ? (isAndroid ? 'Compartir / Abrir con...' : 'Abrir con...') : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3681,7 +3682,8 @@ function triggerBrowserDownload(blob, fileName) {
 function openMaterialFileInNewTab(item) {
   const fileUrl = getAbsoluteMaterialFileUrl(item);
   if (!fileUrl) return;
-  if (typeof navigator.share === 'function') {
+  const isAndroid = /android/i.test(navigator.userAgent || '');
+  if (isAndroid && typeof navigator.share === 'function') {
     navigator.share({
       title: item.title || item.originalName || 'PDF',
       url: fileUrl,
