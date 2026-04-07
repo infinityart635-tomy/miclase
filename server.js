@@ -617,6 +617,18 @@ function findMaterial(subject, materialId) {
   return (subject.materials || []).find((item) => item.id === materialId) || null;
 }
 
+function findMaterialByFileName(state, fileName) {
+  for (const career of state.careers || []) {
+    for (const subject of career.subjects || []) {
+      const material = (subject.materials || []).find((item) => item.fileName === fileName);
+      if (material) {
+        return material;
+      }
+    }
+  }
+  return null;
+}
+
 function collectMaterialIds(materials, rootId) {
   const result = new Set([rootId]);
   let changed = true;
@@ -689,6 +701,24 @@ function buildUploadFileName(file) {
   return `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
 }
 
+function buildInlineContentDisposition(fileName) {
+  const normalizedName =
+    String(fileName || "archivo")
+      .trim()
+      .replace(/[\r\n]+/g, " ")
+      .replace(/["\\]/g, "_") || "archivo";
+  const asciiName =
+    normalizedName
+      .normalize("NFKD")
+      .replace(/[^\x20-\x7E]+/g, "_")
+      .replace(/["\\]/g, "_") || "archivo";
+  const encodedName = encodeURIComponent(normalizedName).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `inline; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
+}
+
 function isDescendantFolder(materials, materialId, targetFolderId) {
   if (!targetFolderId) return false;
   let current = findMaterial({ materials }, targetFolderId);
@@ -741,8 +771,23 @@ app.get("/files/:fileName", async (req, res) => {
       });
       return;
     }
+    const state = await readState();
+    const material = findMaterialByFileName(state, fileName);
+    const resolvedName =
+      material?.originalName || file.originalName || file.fileName || "archivo";
+    const resolvedMimeType =
+      material?.mimeType ||
+      file.mimeType ||
+      mime.lookup(resolvedName) ||
+      mime.lookup(file.fileName) ||
+      "application/octet-stream";
     res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
-    res.type(file.mimeType || mime.lookup(file.fileName) || "application/octet-stream");
+    res.setHeader("Content-Length", String(file.content.length || 0));
+    res.setHeader(
+      "Content-Disposition",
+      buildInlineContentDisposition(resolvedName)
+    );
+    res.type(resolvedMimeType);
     res.send(file.content);
   } catch (error) {
     console.error("MiClase file read error:", error);

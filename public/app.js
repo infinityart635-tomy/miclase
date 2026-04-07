@@ -159,18 +159,12 @@ function persistDownloadedMaterials(downloaded) {
   }
 }
 
-function isMaterialDownloaded(item) {
-  const fileName = String(item?.fileName || '').trim();
-  if (!fileName) return false;
-  return restoreDownloadedMaterials().has(fileName);
+function isMaterialDownloaded(_item) {
+  return false;
 }
 
-function markMaterialAsDownloaded(item) {
-  const fileName = String(item?.fileName || '').trim();
-  if (!fileName) return;
-  const downloaded = restoreDownloadedMaterials();
-  downloaded.add(fileName);
-  persistDownloadedMaterials(downloaded);
+function markMaterialAsDownloaded(_item) {
+  // Browser downloads cannot be tracked reliably from the web app.
 }
 
 function persistLastRoute() {
@@ -2574,7 +2568,7 @@ function wireCareerActions(career) {
       }
       if (materialFileInput && resetFileInput) {
         materialFileInput.value = '';
-        materialFileInput.accept = 'application/pdf,text/plain,.pdf,.txt,image/*,.png,.jpg,.jpeg,.webp,.gif';
+        materialFileInput.accept = '*/*';
       }
       if (!showText && materialTextInput) {
         materialTextInput.value = '';
@@ -3491,12 +3485,13 @@ function renderSubjectMaterialCard(career, subject, item) {
           ` : ''}
         </div>
         ${isPdf && hasFile ? `
-          <a
-            class="material-quick-download"
-            href="${escapeHtml(fileUrl)}"
-            data-subject-id="${escapeHtml(subject.id)}"
-            data-download-subject-material="${escapeHtml(item.id)}"
-          >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
+            <a
+              class="material-quick-download"
+              href="${escapeHtml(fileUrl)}"
+              download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
+              data-subject-id="${escapeHtml(subject.id)}"
+              data-download-subject-material="${escapeHtml(item.id)}"
+            >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3542,6 +3537,7 @@ function renderMaterialViewerContent(subject, item) {
             <a
               class="secondary material-viewer-download"
               href="${escapeHtml(fileUrl)}"
+              download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
               data-open-pdf-direct="true"
             >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
           </div>
@@ -3627,10 +3623,6 @@ function getMaterialFileExtensionLabel(item) {
 }
 
 function openMaterialViewer(subject, item) {
-  if (isMaterialPdf(item) && item?.fileName) {
-    handlePdfAction(item);
-    return;
-  }
   warmCachedMaterialResource(item);
   if (item?.itemType === 'link') {
     const linkUrl = normalizeExternalUrl(item.content || '');
@@ -3698,17 +3690,13 @@ function handlePdfAction(item) {
       return;
     }
   }
-  openMaterialPdf(item);
+  downloadMaterialFile(item);
 }
 
 async function downloadMaterialFile(item) {
   if (!item?.fileName) return;
-  if (isMaterialDownloaded(item)) {
-    openMaterialFileInNewTab(item);
-    return;
-  }
   const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
-  const fileName = item.originalName || item.title || 'material';
+  const fileName = item.originalName || item.title || item.fileName || 'material';
   setTransferState({
     active: true,
     label: `Descargando ${fileName}`,
@@ -3724,9 +3712,8 @@ async function downloadMaterialFile(item) {
     if (!response.body || !window.ReadableStream) {
       const blob = await response.blob();
       triggerBrowserDownload(blob, fileName);
-      markMaterialAsDownloaded(item);
       clearTransferState();
-      setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+      setNotice('Archivo descargado.');
       return;
     }
 
@@ -3762,9 +3749,8 @@ async function downloadMaterialFile(item) {
       type: response.headers.get('content-type') || 'application/octet-stream',
     });
     triggerBrowserDownload(blob, fileName);
-    markMaterialAsDownloaded(item);
     clearTransferState();
-    setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+    setNotice('Archivo descargado.');
   } catch (error) {
     clearTransferState();
     setNotice(error.message || 'No se pudo descargar el archivo.');
@@ -3888,7 +3874,7 @@ function openMaterialUploadModal() {
               <span class="material-file-trigger-button" id="subjectMaterialFileButtonText">Seleccionar archivo</span>
               <span class="material-file-trigger-name" id="subjectMaterialFileName">No elegiste ningún archivo</span>
             </label>
-            <input type="file" name="file" id="subjectMaterialFileInput" accept="application/pdf,text/plain,.pdf,.txt,image/*,.png,.jpg,.jpeg,.webp,.gif">
+            <input type="file" name="file" id="subjectMaterialFileInput" accept="*/*">
           </div>
         </label>
         <label class="hidden" id="subjectMaterialUrlField">
@@ -3922,10 +3908,15 @@ function openMaterialUploadModal() {
 }
 
 function wireMaterialViewerControls() {
-  document.querySelector('[data-rename-material]')?.addEventListener('click', () => {
+  const getViewedMaterialRecord = () => {
     const career = (state.db.careers || []).find((item) => item.id === state.selectedCareerId);
     const subject = (career?.subjects || []).find((item) => item.id === state.modal?.materialSubjectId);
     const material = (subject?.materials || []).find((item) => item.id === state.modal?.materialItemId);
+    return { career, subject, material };
+  };
+
+  document.querySelector('[data-rename-material]')?.addEventListener('click', () => {
+    const { career, subject, material } = getViewedMaterialRecord();
     if (!career || !subject || !material) return;
     openFormModal({
       eyebrow: 'Publicacion',
@@ -3960,6 +3951,13 @@ function wireMaterialViewerControls() {
         }
       },
     });
+  });
+
+  document.querySelector('[data-open-pdf-direct]')?.addEventListener('click', (event) => {
+    const { material } = getViewedMaterialRecord();
+    if (!material) return;
+    event.preventDefault();
+    handlePdfAction(material);
   });
 
   const pdfViewer = document.querySelector('[data-pdf-canvas-viewer]');
