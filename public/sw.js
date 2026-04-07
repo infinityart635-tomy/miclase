@@ -81,7 +81,7 @@ self.addEventListener('fetch', (event) => {
     || url.pathname.endsWith('.gif')
     || url.pathname.endsWith('.svg')
   ) {
-    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
+    event.respondWith(networkFirstWithCache(request, SHELL_CACHE));
   }
 });
 

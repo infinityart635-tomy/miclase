@@ -3284,9 +3284,6 @@ function wireCareerActions(career) {
 
   document.querySelectorAll('[data-download-subject-material]').forEach((link) => {
     link.onclick = async (event) => {
-      if (!hasNativePdfBridge()) {
-        return;
-      }
       const subjectRecord = getCareerSubjects(career).find((item) => item.id === link.dataset.subjectId);
       const subjectSource = (career.subjects || []).find((item) => item.id === link.dataset.subjectId) || subjectRecord;
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
@@ -3698,7 +3695,6 @@ function renderScheduleBlock(entry, subject) {
 
 function renderSubjectMaterialCard(career, subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
-  const fileDownloadUrl = getMaterialDownloadUrl(item);
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
@@ -3742,13 +3738,12 @@ function renderSubjectMaterialCard(career, subject, item) {
           ` : ''}
         </div>
         ${isPdf && hasFile ? `
-            <a
-              class="material-quick-download"
-              href="${escapeHtml(fileDownloadUrl)}"
-              download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
-              data-subject-id="${escapeHtml(subject.id)}"
-              data-download-subject-material="${escapeHtml(item.id)}"
-            >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
+          <a
+            class="material-quick-download"
+            href="${escapeHtml(fileUrl)}"
+            data-subject-id="${escapeHtml(subject.id)}"
+            data-download-subject-material="${escapeHtml(item.id)}"
+          >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3766,12 +3761,10 @@ function renderSubjectMaterialCard(career, subject, item) {
 
 function renderMaterialViewerContent(subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
-  const fileDownloadUrl = getMaterialDownloadUrl(item);
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
   const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
-  const useNativePdfViewer = hasNativePdfBridge() && isPdf && isDownloaded;
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3795,26 +3788,18 @@ function renderMaterialViewerContent(subject, item) {
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-in>+</button>
             <a
               class="secondary material-viewer-download"
-              href="${escapeHtml(fileDownloadUrl)}"
-              download="${escapeHtml(item.originalName || item.title || item.fileName || 'material.pdf')}"
+              href="${escapeHtml(fileUrl)}"
               data-open-pdf-direct="true"
             >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
           </div>
           <div class="material-viewer-stage is-pdf">
-            ${useNativePdfViewer ? `
-              <div class="material-preview material-viewer-preview material-native-pdf-preview">
-                <p class="meta">Este PDF ya esta guardado en tu dispositivo.</p>
-                <button type="button" class="secondary material-native-pdf-open-btn" data-open-pdf-direct="true">Abrir PDF descargado</button>
-              </div>
-            ` : `
-              <div
-                class="material-preview material-viewer-preview material-pdf-canvas-viewer"
-                data-pdf-canvas-viewer
-                data-pdf-src="${escapeHtml(fileUrl)}"
-              >
-                <div class="material-pdf-loading">Cargando PDF...</div>
-              </div>
-            `}
+            <div
+              class="material-preview material-viewer-preview material-pdf-canvas-viewer"
+              data-pdf-canvas-viewer
+              data-pdf-src="${escapeHtml(fileUrl)}"
+            >
+              <div class="material-pdf-loading">Cargando PDF...</div>
+            </div>
           </div>
         </section>
       ` : isImage ? `
@@ -3889,9 +3874,11 @@ function getMaterialFileExtensionLabel(item) {
 }
 
 function openMaterialViewer(subject, item) {
-  if (!(hasNativePdfBridge() && isMaterialPdf(item) && isNativePdfDownloaded(item))) {
-    warmCachedMaterialResource(item);
+  if (isMaterialPdf(item) && item?.fileName) {
+    handlePdfAction(item);
+    return;
   }
+  warmCachedMaterialResource(item);
   if (item?.itemType === 'link') {
     const linkUrl = normalizeExternalUrl(item.content || '');
     if (linkUrl) {
@@ -3944,7 +3931,6 @@ function handlePdfAction(item) {
         window.AndroidPdfBridge.openPdf(fileUrl, fileName);
         return;
       }
-      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
       setTransferState({
         active: true,
         label: `Descargando ${fileName}`,
@@ -3954,13 +3940,12 @@ function handlePdfAction(item) {
       window.AndroidPdfBridge.downloadPdf(fileUrl, fileName);
       return;
     } catch (_) {
-      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
       clearTransferState();
       setNotice('No se pudo iniciar la descarga del PDF.');
       return;
     }
   }
-  downloadMaterialFile(item);
+  openMaterialPdf(item);
 }
 
 function downloadMaterialFile(item) {
@@ -4810,7 +4795,6 @@ function registerDeviceCache() {
 
 function initNativePdfBridge() {
   window.addEventListener('miclase-pdf-refresh', () => {
-    syncDownloadedNativePdfs();
     render();
   });
   window.addEventListener('miclase-pdf-progress', (event) => {
@@ -4818,22 +4802,7 @@ function initNativePdfBridge() {
     const status = String(detail.status || '');
     const message = String(detail.message || '');
     const progress = Number(detail.progress || 0);
-    const material = findMaterialByFileUrl(detail.url || '');
-    const materialKey = getMaterialTransferKey(material);
     if (status === 'started' || status === 'downloading') {
-      if (materialKey && nativePdfDownloadSimulations.has(materialKey)) {
-        const session = nativePdfDownloadSimulations.get(materialKey);
-        if (session && progress > 0) {
-          setTransferState({
-            active: true,
-            key: session.transferKey,
-            label: message || session.label,
-            progress: Math.max(progress, Math.min(98, Number(state.transfer?.progress || 0))),
-            indeterminate: false,
-          });
-        }
-        return;
-      }
       setTransferState({
         active: true,
         label: message || 'Descargando PDF',
@@ -4843,37 +4812,19 @@ function initNativePdfBridge() {
       return;
     }
     if (status === 'completed') {
-      if (material) {
-        markMaterialAsDownloaded(material);
-        stopNativePdfDownloadSimulation(material, { clearTransfer: true, clearOptimistic: true });
-      }
-      syncDownloadedNativePdfs();
       clearTransferState();
       setNotice(message || 'PDF descargado.');
       render();
       return;
     }
     if (status === 'opened') {
-      if (material) {
-        markMaterialAsDownloaded(material);
-        stopNativePdfDownloadSimulation(material, { clearTransfer: true, clearOptimistic: true });
-      }
-      syncDownloadedNativePdfs();
       clearTransferState();
       setNotice(message || 'Abriendo PDF.');
-      render();
       return;
     }
     if (status === 'error') {
-      if (material) {
-        stopNativePdfDownloadSimulation(material, { clearTransfer: true, clearOptimistic: true });
-        if (!getDownloadedNativePdfBridgeUrl(material)) {
-          unmarkMaterialAsDownloaded(material);
-        }
-      }
       clearTransferState();
       setNotice(message || 'No se pudo descargar el PDF.');
-      render();
     }
   });
 }
