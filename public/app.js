@@ -160,12 +160,36 @@ function persistDownloadedMaterials(downloaded) {
   }
 }
 
-function isMaterialDownloaded(_item) {
-  return false;
+function isMaterialDownloaded(item) {
+  const fileName = String(item?.fileName || '').trim();
+  if (!fileName) return false;
+  return restoreDownloadedMaterials().has(fileName);
 }
 
-function markMaterialAsDownloaded(_item) {
-  // Browser downloads cannot be tracked reliably from the web app.
+function markMaterialAsDownloaded(item) {
+  const fileName = String(item?.fileName || '').trim();
+  if (!fileName) return;
+  const downloaded = restoreDownloadedMaterials();
+  downloaded.add(fileName);
+  persistDownloadedMaterials(downloaded);
+}
+
+function findMaterialByFileUrl(url) {
+  const rawUrl = String(url || '').trim();
+  if (!rawUrl) return null;
+  for (const career of state.db.careers || []) {
+    for (const subject of career.subjects || []) {
+      for (const material of subject.materials || []) {
+        if (!material?.fileName) continue;
+        const absoluteFileUrl = getAbsoluteMaterialFileUrl(material);
+        const absoluteDownloadUrl = getAbsoluteMaterialDownloadUrl(material);
+        if (rawUrl === absoluteFileUrl || rawUrl === absoluteDownloadUrl) {
+          return material;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function persistLastRoute() {
@@ -292,7 +316,7 @@ function getNativePdfBridgeUrl(item) {
 
 function isNativePdfDownloaded(item) {
   if (!hasNativePdfBridge() || !isMaterialPdf(item)) return false;
-  return Boolean(getDownloadedNativePdfBridgeUrl(item));
+  return Boolean(getDownloadedNativePdfBridgeUrl(item)) || isMaterialDownloaded(item);
 }
 
 function postCacheMessage(type, payload = {}) {
@@ -4601,14 +4625,23 @@ function initNativePdfBridge() {
       return;
     }
     if (status === 'completed') {
+      const material = findMaterialByFileUrl(detail.url || '');
+      if (material) {
+        markMaterialAsDownloaded(material);
+      }
       clearTransferState();
       setNotice(message || 'PDF descargado.');
       render();
       return;
     }
     if (status === 'opened') {
+      const material = findMaterialByFileUrl(detail.url || '');
+      if (material) {
+        markMaterialAsDownloaded(material);
+      }
       clearTransferState();
       setNotice(message || 'Abriendo PDF.');
+      render();
       return;
     }
     if (status === 'error') {
