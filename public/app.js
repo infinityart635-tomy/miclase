@@ -56,7 +56,6 @@ const APP_UPDATE_CHECK_INTERVAL = 60000;
 let swUpdateCheckTimer = 0;
 let hasReloadedForUpdate = false;
 let transferResetTimer = 0;
-const pendingDownloadObjectUrls = new Set();
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -241,6 +240,16 @@ function getMaterialDownloadUrl(item) {
 
 function getAbsoluteMaterialFileUrl(item) {
   const relativeUrl = getMaterialFileUrl(item);
+  if (!relativeUrl) return '';
+  try {
+    return new URL(relativeUrl, window.location.origin).toString();
+  } catch (_) {
+    return relativeUrl;
+  }
+}
+
+function getAbsoluteMaterialDownloadUrl(item) {
+  const relativeUrl = getMaterialDownloadUrl(item);
   if (!relativeUrl) return '';
   try {
     return new URL(relativeUrl, window.location.origin).toString();
@@ -3703,72 +3712,43 @@ function handlePdfAction(item) {
         window.AndroidPdfBridge.openPdf(fileUrl, fileName);
         return;
       }
-      setTransferState({
-        active: true,
-        label: `Descargando ${fileName}`,
-        progress: 4,
-        indeterminate: true,
-      });
-      window.AndroidPdfBridge.downloadPdf(fileUrl, fileName);
-      return;
     } catch (_) {
-      clearTransferState();
-      setNotice('No se pudo iniciar la descarga del PDF.');
-      return;
+      // Fall through to direct HTTP download.
     }
   }
   downloadMaterialFile(item);
 }
 
-async function downloadMaterialFile(item) {
+function downloadMaterialFile(item) {
   if (!item?.fileName) return;
-  const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
+  const fileUrl = getAbsoluteMaterialDownloadUrl(item);
   const fileName = item.originalName || item.title || item.fileName || 'material';
+  if (!fileUrl) return;
   cancelTransferStateClear();
   setTransferState({
     active: true,
-    label: `Preparando ${fileName}`,
+    label: `Descargando ${fileName}`,
     progress: 12,
     indeterminate: true,
   });
-  try {
-    const response = await fetch(fileUrl, { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error('No se pudo descargar el archivo.');
-    }
-    const blob = await response.blob();
-    triggerBrowserDownload(blob, fileName);
-    scheduleTransferStateClear();
-    setNotice('Descarga iniciada.');
-  } catch (error) {
-    cancelTransferStateClear();
-    clearTransferState();
-    setNotice(error.message || 'No se pudo descargar el archivo.');
-  }
+  triggerBrowserDownload(fileUrl, fileName);
+  scheduleTransferStateClear();
+  setNotice('Descarga iniciada.');
 }
 
-function triggerBrowserDownload(blob, fileName) {
-  const objectUrl = URL.createObjectURL(blob);
-  pendingDownloadObjectUrls.add(objectUrl);
+function triggerBrowserDownload(fileUrl, fileName) {
   const anchor = document.createElement('a');
-  anchor.href = objectUrl;
+  anchor.href = fileUrl;
   anchor.download = fileName;
   anchor.rel = 'noopener';
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => {
-    if (!pendingDownloadObjectUrls.has(objectUrl)) return;
-    pendingDownloadObjectUrls.delete(objectUrl);
-    URL.revokeObjectURL(objectUrl);
-  }, 300000);
 }
 
 window.addEventListener('pagehide', () => {
   cancelTransferStateClear();
-  pendingDownloadObjectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
-  pendingDownloadObjectUrls.clear();
 });
 
 async function openMaterialFileInNewTab(item) {
