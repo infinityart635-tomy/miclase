@@ -485,12 +485,11 @@ function getNativePdfBridgeUrl(item) {
 
 function isNativePdfDownloaded(item) {
   if (!hasNativePdfBridge() || !isMaterialPdf(item)) return false;
-  return Boolean(getDownloadedNativePdfBridgeUrl(item));
-}
-
-function isNativePdfOptimisticallyReady(item) {
-  const key = getMaterialTransferKey(item);
-  return Boolean(key) && nativePdfOptimisticOpen.has(key);
+  try {
+    return Boolean(window.AndroidPdfBridge.isPdfDownloaded(getAbsoluteMaterialFileUrl(item)));
+  } catch (_) {
+    return false;
+  }
 }
 
 function postCacheMessage(type, payload = {}) {
@@ -3703,9 +3702,7 @@ function renderSubjectMaterialCard(career, subject, item) {
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
-  const isDownloaded = hasNativePdfBridge()
-    ? (isNativePdfDownloaded(item) || isNativePdfOptimisticallyReady(item))
-    : isMaterialDownloaded(item);
+  const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3773,11 +3770,8 @@ function renderMaterialViewerContent(subject, item) {
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
-  const isActuallyDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
-  const isDownloaded = hasNativePdfBridge()
-    ? (isActuallyDownloaded || isNativePdfOptimisticallyReady(item))
-    : isActuallyDownloaded;
-  const useNativePdfViewer = hasNativePdfBridge() && isPdf && isActuallyDownloaded;
+  const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
+  const useNativePdfViewer = hasNativePdfBridge() && isPdf && isDownloaded;
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3942,25 +3936,28 @@ function openMaterialViewer(subject, item) {
 
 function handlePdfAction(item) {
   if (hasNativePdfBridge()) {
+    const fileUrl = getAbsoluteMaterialFileUrl(item);
     const fileName = item.originalName || item.title || 'material.pdf';
-    const downloadedBridgeUrl = getDownloadedNativePdfBridgeUrl(item);
-    const isOptimistic = isNativePdfOptimisticallyReady(item);
+    const isDownloaded = isNativePdfDownloaded(item);
     try {
-      if (downloadedBridgeUrl) {
-        window.AndroidPdfBridge.openPdf(downloadedBridgeUrl, fileName);
+      if (isDownloaded) {
+        window.AndroidPdfBridge.openPdf(fileUrl, fileName);
         return;
       }
-      if (isOptimistic) {
-        const itemKey = getMaterialTransferKey(item);
-        const pendingSimulation = itemKey ? nativePdfDownloadSimulations.get(itemKey) : null;
-        if (pendingSimulation) {
-          updateNativePdfDownloadSimulation(itemKey);
-        }
-        setNotice('El PDF se esta descargando. Espera unos segundos.');
-        return;
-      }
+      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
+      setTransferState({
+        active: true,
+        label: `Descargando ${fileName}`,
+        progress: 4,
+        indeterminate: true,
+      });
+      window.AndroidPdfBridge.downloadPdf(fileUrl, fileName);
+      return;
     } catch (_) {
-      // Fall through to direct HTTP download.
+      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
+      clearTransferState();
+      setNotice('No se pudo iniciar la descarga del PDF.');
+      return;
     }
   }
   downloadMaterialFile(item);
@@ -3968,35 +3965,22 @@ function handlePdfAction(item) {
 
 function downloadMaterialFile(item) {
   if (!item?.fileName) return;
+  if (hasNativePdfBridge() && isMaterialPdf(item)) {
+    handlePdfAction(item);
+    return;
+  }
   const fileUrl = getAbsoluteMaterialDownloadUrl(item);
-  const nativeFileUrl = getAbsoluteMaterialFileUrl(item);
   const fileName = item.originalName || item.title || item.fileName || 'material';
   if (!fileUrl) return;
-  const useNativePdfDownload = hasNativePdfBridge() && isMaterialPdf(item);
-  if (useNativePdfDownload) {
-    startNativePdfDownloadSimulation(item);
-  } else {
-    cancelTransferStateClear();
-    setTransferState({
-      active: true,
-      label: `Descargando ${fileName}`,
-      progress: 12,
-      indeterminate: true,
-    });
-  }
-  if (useNativePdfDownload) {
-    try {
-      window.AndroidPdfBridge.downloadPdf(nativeFileUrl || fileUrl, fileName);
-    } catch (_) {
-      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
-      clearTransferState();
-      setNotice('No se pudo iniciar la descarga del PDF.');
-      return;
-    }
-  } else {
-    triggerBrowserDownload(fileUrl, fileName);
-    scheduleTransferStateClear();
-  }
+  cancelTransferStateClear();
+  setTransferState({
+    active: true,
+    label: `Descargando ${fileName}`,
+    progress: 12,
+    indeterminate: true,
+  });
+  triggerBrowserDownload(fileUrl, fileName);
+  scheduleTransferStateClear();
   setNotice('Descarga iniciada.');
 }
 
