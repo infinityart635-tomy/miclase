@@ -8,6 +8,8 @@ const multer = require("multer");
 const mime = require("mime-types");
 const { Pool } = require("pg");
 
+loadEnvFile();
+
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 const publicDir = path.join(__dirname, "public");
@@ -33,6 +35,23 @@ const CAREER_COLORS = [
 
 let pool = null;
 let appStateCache = { users: [], careers: [] };
+
+function loadEnvFile() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) return;
+  const raw = fs.readFileSync(envPath, "utf8");
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex <= 0) return;
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, "");
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  });
+}
 
 function getAppVersion() {
   const watchedFiles = [
