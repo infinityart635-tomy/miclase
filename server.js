@@ -348,6 +348,15 @@ async function initializeDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS uploaded_files (
+      file_name TEXT PRIMARY KEY,
+      original_name TEXT NOT NULL DEFAULT '',
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      content BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   await pool.query(
     `
       INSERT INTO app_meta (app_name)
@@ -409,6 +418,102 @@ async function saveState(state) {
     [JSON.stringify(normalized)]
   );
   return clone(normalized);
+}
+
+async function saveUploadedFile({ fileName, originalName, mimeType, buffer }) {
+  if (!fileName || !buffer) {
+    throw new Error("Missing file payload.");
+  }
+  if (!pool) {
+    const filePath = path.join(uploadsDir, fileName);
+    await fsp.writeFile(filePath, buffer);
+    return;
+  }
+  await pool.query(
+    `
+      INSERT INTO uploaded_files (file_name, original_name, mime_type, content, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (file_name)
+      DO UPDATE SET
+        original_name = EXCLUDED.original_name,
+        mime_type = EXCLUDED.mime_type,
+        content = EXCLUDED.content,
+        created_at = NOW()
+    `,
+    [fileName, originalName || "", mimeType || "application/octet-stream", buffer]
+  );
+}
+
+async function readUploadedFile(fileName) {
+  if (!fileName) return null;
+  if (!pool) {
+    const filePath = path.join(uploadsDir, fileName);
+    try {
+      const content = await fsp.readFile(filePath);
+      return {
+        fileName,
+        mimeType: mime.lookup(fileName) || "application/octet-stream",
+        content,
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  const result = await pool.query(
+    `
+      SELECT file_name, original_name, mime_type, content
+      FROM uploaded_files
+      WHERE file_name = $1
+      LIMIT 1
+    `,
+    [fileName]
+  );
+  if (!result.rows.length) {
+    const fallbackPath = path.join(uploadsDir, fileName);
+    try {
+      const content = await fsp.readFile(fallbackPath);
+      return {
+        fileName,
+        mimeType: mime.lookup(fileName) || "application/octet-stream",
+        content,
+      };
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  return {
+    fileName: result.rows[0].file_name,
+    originalName: result.rows[0].original_name,
+    mimeType: result.rows[0].mime_type,
+    content: result.rows[0].content,
+  };
+}
+
+async function removeUploadedFile(fileName) {
+  if (!fileName) return;
+  if (!pool) {
+    const filePath = path.join(uploadsDir, fileName);
+    try {
+      await fsp.unlink(filePath);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    return;
+  }
+  await pool.query("DELETE FROM uploaded_files WHERE file_name = $1", [fileName]);
+  const fallbackPath = path.join(uploadsDir, fileName);
+  try {
+    await fsp.unlink(fallbackPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
 }
 
 async function getDatabaseHealth() {
@@ -512,14 +617,7 @@ function collectMaterialIds(materials, rootId) {
 async function removeUploadedFiles(materials) {
   for (const item of materials) {
     if (!item.fileName) continue;
-    const filePath = path.join(uploadsDir, item.fileName);
-    try {
-      await fsp.unlink(filePath);
-    } catch (error) {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    }
+    await removeUploadedFile(item.fileName);
   }
 }
 
@@ -614,11 +712,25 @@ app.get("/sw.js", (_req, res) => {
   res.send(renderPublicTemplate(swFile));
 });
 app.use(express.static(publicDir, { index: false }));
-app.use("/files", express.static(uploadsDir));
-app.use("/files", (_req, res) => {
-  res.status(404).json({
-    error: "No encontre ese archivo.",
-  });
+app.get("/files/:fileName", async (req, res) => {
+  try {
+    const fileName = String(req.params.fileName || "").trim();
+    const file = await readUploadedFile(fileName);
+    if (!file) {
+      res.status(404).json({
+        error: "No encontre ese archivo.",
+      });
+      return;
+    }
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    res.type(file.mimeType || mime.lookup(file.fileName) || "application/octet-stream");
+    res.send(file.content);
+  } catch (error) {
+    console.error("MiClase file read error:", error);
+    res.status(500).json({
+      error: "No pude leer el archivo.",
+    });
+  }
 });
 
 app.get("/api/health", async (_req, res) => {
@@ -1159,9 +1271,17 @@ app.post(
         return;
       }
       const storedFileName = buildUploadFileName(req.file);
-      const storedFilePath = path.join(uploadsDir, storedFileName);
+      const resolvedMimeType =
+        req.file.mimetype ||
+        mime.lookup(req.file.originalname || "") ||
+        "application/octet-stream";
       try {
-        await fsp.writeFile(storedFilePath, req.file.buffer);
+        await saveUploadedFile({
+          fileName: storedFileName,
+          originalName: req.file.originalname,
+          mimeType: resolvedMimeType,
+          buffer: req.file.buffer,
+        });
       } catch (error) {
         console.error("MiClase upload write error:", error);
         res.status(500).json({ error: "No pude guardar el archivo subido." });
@@ -1171,10 +1291,7 @@ app.post(
       material.content = content;
       material.fileName = storedFileName;
       material.originalName = req.file.originalname;
-      material.mimeType =
-        req.file.mimetype ||
-        mime.lookup(req.file.originalname || "") ||
-        "application/octet-stream";
+      material.mimeType = resolvedMimeType;
     }
 
     subject.materials.push(material);

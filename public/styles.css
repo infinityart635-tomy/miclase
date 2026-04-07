@@ -1775,12 +1775,6 @@ th, td {
   margin: 0 0 8px;
   color: var(--material-accent, var(--text));
 }
-.subject-material-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
 .material-quick-download {
   flex: 0 0 auto;
   align-self: flex-start;
@@ -1870,29 +1864,6 @@ th, td {
 }
 .material-drag-handle:active {
   cursor: grabbing;
-}
-.material-select-toggle {
-  position: absolute;
-  top: 10px;
-  right: 30px;
-  width: 24px;
-  height: 24px;
-  min-height: 24px;
-  border-radius: 999px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  font-size: 0.85rem;
-  line-height: 1;
-  box-shadow: none;
-  background: rgba(14, 22, 31, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: transparent;
-}
-.material-select-toggle.is-selected {
-  background: linear-gradient(180deg, #df7b58 0%, #b9593f 100%);
-  border-color: #8e4734;
-  color: #fff7f3;
 }
 .subject-floating-delete {
   position: fixed;

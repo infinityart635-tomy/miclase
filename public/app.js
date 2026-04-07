@@ -2021,19 +2021,16 @@ function renderSubjectDetailView(career, subject) {
                 </div>
               ` : ''}
             </div>
-            <div class="subject-material-actions">
-              <button type="button" class="secondary" id="toggleMaterialSelectionMode">${state.materialSelectionMode ? 'Cancelar seleccion' : 'Seleccionar'}</button>
-              ${currentFolder ? `
-                <button
-                  type="button"
-                  class="danger subject-folder-delete"
-                  id="deleteCurrentSubjectFolder"
-                  data-delete-subject-material="${escapeHtml(currentFolder.id)}"
-                  data-subject-id="${escapeHtml(subjectRecord.id)}"
-                  data-parent-folder-id="${escapeHtml(currentFolder.parentFolderId || '')}"
-                >Eliminar carpeta</button>
-              ` : ''}
-            </div>
+            ${currentFolder ? `
+              <button
+                type="button"
+                class="danger subject-folder-delete"
+                id="deleteCurrentSubjectFolder"
+                data-delete-subject-material="${escapeHtml(currentFolder.id)}"
+                data-subject-id="${escapeHtml(subjectRecord.id)}"
+                data-parent-folder-id="${escapeHtml(currentFolder.parentFolderId || '')}"
+              >Eliminar carpeta</button>
+            ` : ''}
           </div>
           ${materials.length ? materials.map((item) => renderSubjectMaterialCard(career, subjectRecord, item)).join('') : `
             <div class="schedule-empty-card">
@@ -2425,35 +2422,6 @@ function wireCareerActions(career) {
       openMaterialUploadModal();
     };
   }
-
-  const toggleMaterialSelectionMode = document.getElementById('toggleMaterialSelectionMode');
-  if (toggleMaterialSelectionMode) {
-    toggleMaterialSelectionMode.onclick = () => {
-      if (state.materialSelectionMode) {
-        clearMaterialSelection();
-      } else {
-        state.materialSelectionMode = true;
-        state.selectedMaterialIds = [];
-      }
-      render();
-    };
-  }
-
-  document.querySelectorAll('[data-material-select-toggle]').forEach((button) => {
-    button.onclick = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const materialId = button.dataset.materialSelectToggle || '';
-      const itemType = button.dataset.materialType || 'file';
-      if (!materialId) return;
-      const changed = toggleMaterialSelection(materialId, itemType);
-      if (!changed) {
-        setNotice('No puedes mezclar carpetas con archivos en la misma seleccion.');
-        return;
-      }
-      render();
-    };
-  });
 
   if (state.materialSelectionMode && state.selectedMaterialIds.length && !document.getElementById('deleteSelectedMaterialsBtn')) {
     const floatingDelete = document.createElement('button');
@@ -2938,6 +2906,7 @@ function wireCareerActions(career) {
       const materialId = handle.dataset.materialDragHandle || '';
       const itemType = handle.dataset.materialType || 'file';
       if (!materialId) return;
+      state.materialSelectionMode = true;
       const changed = toggleMaterialSelection(materialId, itemType);
       if (!changed) {
         setNotice('No puedes mezclar carpetas con archivos en la misma seleccion.');
@@ -3529,18 +3498,9 @@ function renderSubjectMaterialCard(career, subject, item) {
             data-download-subject-material="${escapeHtml(item.id)}"
           >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
         ` : ''}
-        ${state.materialSelectionMode ? `
-          <button
-            type="button"
-            class="material-select-toggle ${isSelected ? 'is-selected' : ''}"
-            data-material-select-toggle="${escapeHtml(item.id)}"
-            data-material-type="${escapeHtml(item.itemType || 'file')}"
-            aria-label="${isSelected ? 'Quitar de la seleccion' : 'Seleccionar'}"
-          >${isSelected ? '✓' : ''}</button>
-        ` : ''}
         <button
           type="button"
-          class="material-drag-handle ${state.materialSelectionMode ? 'hidden' : ''}"
+          class="material-drag-handle"
           data-material-drag-handle="${escapeHtml(item.id)}"
           data-material-type="${escapeHtml(item.itemType || 'file')}"
           draggable="true"
