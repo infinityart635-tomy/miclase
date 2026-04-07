@@ -3969,6 +3969,7 @@ function handlePdfAction(item) {
 function downloadMaterialFile(item) {
   if (!item?.fileName) return;
   const fileUrl = getAbsoluteMaterialDownloadUrl(item);
+  const nativeFileUrl = getAbsoluteMaterialFileUrl(item);
   const fileName = item.originalName || item.title || item.fileName || 'material';
   if (!fileUrl) return;
   const useNativePdfDownload = hasNativePdfBridge() && isMaterialPdf(item);
@@ -3984,7 +3985,14 @@ function downloadMaterialFile(item) {
     });
   }
   if (useNativePdfDownload) {
-    triggerBrowserDownload(fileUrl, fileName);
+    try {
+      window.AndroidPdfBridge.downloadPdf(nativeFileUrl || fileUrl, fileName);
+    } catch (_) {
+      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
+      clearTransferState();
+      setNotice('No se pudo iniciar la descarga del PDF.');
+      return;
+    }
   } else {
     triggerBrowserDownload(fileUrl, fileName);
     scheduleTransferStateClear();
