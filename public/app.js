@@ -2719,7 +2719,7 @@ function wireCareerActions(career) {
       const materialId = card.dataset.materialId || '';
       const itemType = card.dataset.materialType || 'file';
       const target = event.target;
-      if (target.closest('[data-material-drag-handle]') || target.closest('[data-open-material-folder]') || target.closest('[data-open-subject-material]')) {
+      if (target.closest('[data-material-drag-handle]') || target.closest('[data-open-material-folder]') || target.closest('[data-open-subject-material]') || target.closest('[data-download-subject-material]')) {
         return;
       }
       if (!materialId) return;
@@ -2818,6 +2818,12 @@ function wireCareerActions(career) {
       }
       warmCachedMaterialResource(material);
       openMaterialViewer(subjectSource, material);
+    };
+  });
+
+  document.querySelectorAll('[data-download-subject-material]').forEach((link) => {
+    link.onclick = () => {
+      setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
     };
   });
 
@@ -3225,6 +3231,7 @@ function renderSubjectMaterialCard(career, subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
+  const isPdf = isMaterialPdf(item);
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3263,6 +3270,14 @@ function renderSubjectMaterialCard(career, subject, item) {
             >${escapeHtml(fileLabel)}</button>
           ` : ''}
         </div>
+        ${isPdf && hasFile ? `
+          <a
+            class="material-quick-download"
+            href="${escapeHtml(fileUrl)}"
+            download="${escapeHtml(item.originalName || item.title || 'material')}"
+            data-download-subject-material="${escapeHtml(item.id)}"
+          >Descargar</a>
+        ` : ''}
         <button
           type="button"
           class="material-drag-handle"
@@ -3280,7 +3295,7 @@ function renderSubjectMaterialCard(career, subject, item) {
 function renderMaterialViewerContent(subject, item) {
   const fileUrl = item.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
-  const isPdf = String(item.mimeType || '').includes('pdf') || /\.pdf$/i.test(String(item.originalName || ''));
+  const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
   if (item.itemType === 'link' && linkUrl) {
     return `
@@ -3367,6 +3382,10 @@ function renderMaterialViewerContent(subject, item) {
   `;
 }
 
+function isMaterialPdf(item) {
+  return String(item?.mimeType || '').includes('pdf') || /\.pdf$/i.test(String(item?.originalName || ''));
+}
+
 function isMaterialImage(item) {
   return String(item?.mimeType || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(item?.originalName || ''));
 }
@@ -3387,6 +3406,11 @@ function getMaterialFileExtensionLabel(item) {
 }
 
 function openMaterialViewer(subject, item) {
+  if (isMaterialPdf(item) && item?.fileName) {
+    triggerMaterialDownload(item);
+    setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
+    return;
+  }
   warmCachedMaterialResource(item);
   if (item?.itemType === 'link') {
     const linkUrl = normalizeExternalUrl(item.content || '');
@@ -3428,6 +3452,19 @@ function openMaterialViewer(subject, item) {
     },
   };
   render();
+}
+
+function triggerMaterialDownload(item) {
+  if (!item?.fileName) return;
+  const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
+  const anchor = document.createElement('a');
+  anchor.href = fileUrl;
+  anchor.download = item.originalName || item.title || 'material';
+  anchor.rel = 'noopener';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function openMaterialUploadModal() {

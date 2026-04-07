@@ -1775,6 +1775,32 @@ th, td {
   margin: 0 0 8px;
   color: var(--material-accent, var(--text));
 }
+.material-quick-download {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  margin-right: 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(132, 96, 54, 0.32);
+  background: linear-gradient(180deg, rgba(247, 237, 215, 0.96), rgba(226, 210, 178, 0.96));
+  color: #16222d;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.material-quick-download:hover,
+.material-quick-download:focus-visible {
+  color: #16222d;
+  border-color: rgba(132, 96, 54, 0.48);
+  box-shadow: none;
+  filter: none;
+  transform: none;
+}
 .material-thumb-button {
   display: block;
   width: 68px;
