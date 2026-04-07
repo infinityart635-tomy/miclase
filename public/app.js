@@ -55,6 +55,8 @@ const OFFLINE_WARM_LIMIT = 18;
 const APP_UPDATE_CHECK_INTERVAL = 60000;
 let swUpdateCheckTimer = 0;
 let hasReloadedForUpdate = false;
+let transferResetTimer = 0;
+const pendingDownloadObjectUrls = new Set();
 
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
@@ -180,6 +182,20 @@ function persistLastRoute() {
   } catch (_) {
     // Ignore storage failures and keep the app working.
   }
+}
+
+function cancelTransferStateClear() {
+  if (!transferResetTimer) return;
+  window.clearTimeout(transferResetTimer);
+  transferResetTimer = 0;
+}
+
+function scheduleTransferStateClear(delay = 1200) {
+  cancelTransferStateClear();
+  transferResetTimer = window.setTimeout(() => {
+    transferResetTimer = 0;
+    clearTransferState();
+  }, delay);
 }
 
 function restoreLastRoute() {
@@ -3697,10 +3713,11 @@ async function downloadMaterialFile(item) {
   if (!item?.fileName) return;
   const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
   const fileName = item.originalName || item.title || item.fileName || 'material';
+  cancelTransferStateClear();
   setTransferState({
     active: true,
-    label: `Descargando ${fileName}`,
-    progress: 4,
+    label: `Preparando ${fileName}`,
+    progress: 12,
     indeterminate: true,
   });
   try {
@@ -3708,50 +3725,12 @@ async function downloadMaterialFile(item) {
     if (!response.ok) {
       throw new Error('No se pudo descargar el archivo.');
     }
-    const total = Number(response.headers.get('content-length') || 0);
-    if (!response.body || !window.ReadableStream) {
-      const blob = await response.blob();
-      triggerBrowserDownload(blob, fileName);
-      clearTransferState();
-      setNotice('Archivo descargado.');
-      return;
-    }
-
-    const reader = response.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        chunks.push(value);
-        loaded += value.byteLength;
-        if (total > 0) {
-          setTransferState({
-            active: true,
-            label: `Descargando ${fileName}`,
-            progress: (loaded / total) * 100,
-            indeterminate: false,
-          });
-        } else {
-          setTransferState({
-            active: true,
-            label: `Descargando ${fileName}`,
-            progress: 55,
-            indeterminate: true,
-          });
-        }
-      }
-    }
-
-    const blob = new Blob(chunks, {
-      type: response.headers.get('content-type') || 'application/octet-stream',
-    });
+    const blob = await response.blob();
     triggerBrowserDownload(blob, fileName);
-    clearTransferState();
-    setNotice('Archivo descargado.');
+    scheduleTransferStateClear();
+    setNotice('Descarga iniciada.');
   } catch (error) {
+    cancelTransferStateClear();
     clearTransferState();
     setNotice(error.message || 'No se pudo descargar el archivo.');
   }
@@ -3759,6 +3738,7 @@ async function downloadMaterialFile(item) {
 
 function triggerBrowserDownload(blob, fileName) {
   const objectUrl = URL.createObjectURL(blob);
+  pendingDownloadObjectUrls.add(objectUrl);
   const anchor = document.createElement('a');
   anchor.href = objectUrl;
   anchor.download = fileName;
@@ -3767,8 +3747,18 @@ function triggerBrowserDownload(blob, fileName) {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  window.setTimeout(() => {
+    if (!pendingDownloadObjectUrls.has(objectUrl)) return;
+    pendingDownloadObjectUrls.delete(objectUrl);
+    URL.revokeObjectURL(objectUrl);
+  }, 300000);
 }
+
+window.addEventListener('pagehide', () => {
+  cancelTransferStateClear();
+  pendingDownloadObjectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
+  pendingDownloadObjectUrls.clear();
+});
 
 async function openMaterialFileInNewTab(item) {
   const fileUrl = getAbsoluteMaterialFileUrl(item);
