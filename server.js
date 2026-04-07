@@ -227,6 +227,7 @@ function normalizeMaterial(material) {
     fileName: material.fileName || "",
     originalName: material.originalName || "",
     mimeType: material.mimeType || "",
+    fileHash: String(material.fileHash || "").trim().toLowerCase(),
     parentFolderId: material.parentFolderId || "",
     uploadedAt: material.uploadedAt || new Date().toISOString(),
     uploadedBy: material.uploadedBy || "",
@@ -699,6 +700,67 @@ function buildUploadFileName(file) {
   const base = path.basename(file?.originalname || "archivo", ext);
   const safeBase = toSafeFileComponent(base) || "archivo";
   return `${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
+}
+
+function hashFileBuffer(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function getMaterialParentFolders(subject, material) {
+  const folders = [];
+  let currentFolderId = material?.parentFolderId || "";
+  while (currentFolderId) {
+    const folder = findMaterial(subject, currentFolderId);
+    if (!folder || folder.itemType !== "folder") break;
+    folders.unshift(folder);
+    currentFolderId = folder.parentFolderId || "";
+  }
+  return folders;
+}
+
+function formatDuplicateMaterialLocation(career, subject, material) {
+  const folderTrail = getMaterialParentFolders(subject, material)
+    .map((item) => normalizeText(item.title))
+    .filter(Boolean);
+  return [
+    normalizeText(career?.name) || "Carrera",
+    normalizeText(subject?.name) || "Materia",
+    ...folderTrail,
+  ].join(" > ");
+}
+
+async function ensureMaterialFileHash(material) {
+  if (!material?.fileName) {
+    return { hash: "", changed: false };
+  }
+  const existingHash = String(material.fileHash || "").trim().toLowerCase();
+  if (existingHash) {
+    return { hash: existingHash, changed: false };
+  }
+  const file = await readUploadedFile(material.fileName);
+  if (!file?.content) {
+    return { hash: "", changed: false };
+  }
+  const hash = hashFileBuffer(file.content);
+  material.fileHash = hash;
+  return { hash, changed: true };
+}
+
+async function findDuplicateUploadedMaterial(state, incomingHash) {
+  let changed = false;
+  for (const career of state.careers || []) {
+    for (const subject of career.subjects || []) {
+      for (const material of subject.materials || []) {
+        if (!material?.fileName) continue;
+        const result = await ensureMaterialFileHash(material);
+        changed = changed || result.changed;
+        if (result.hash && result.hash === incomingHash) {
+          return { duplicate: { career, subject, material }, changed };
+        }
+      }
+    }
+  }
+  return { duplicate: null, changed };
 }
 
 function buildContentDisposition(fileName, dispositionType = "inline") {
@@ -1337,6 +1399,32 @@ app.post(
         res.status(400).json({ error: "Selecciona un archivo." });
         return;
       }
+      const fileHash = hashFileBuffer(req.file.buffer);
+      const duplicateResult = await findDuplicateUploadedMaterial(state, fileHash);
+      if (duplicateResult.changed) {
+        await saveState(state);
+      }
+      if (duplicateResult.duplicate) {
+        const { career: duplicateCareer, subject: duplicateSubject, material: duplicateMaterial } =
+          duplicateResult.duplicate;
+        const duplicateLocation = formatDuplicateMaterialLocation(
+          duplicateCareer,
+          duplicateSubject,
+          duplicateMaterial
+        );
+        const duplicateLabel =
+          normalizeText(duplicateMaterial.title)
+          || normalizeText(duplicateMaterial.originalName)
+          || "este archivo";
+        res.status(409).json({
+          error: `Ese archivo ya esta subido en ${duplicateLocation} como "${duplicateLabel}".`,
+          duplicateLocation,
+          duplicateCareerId: duplicateCareer.id,
+          duplicateSubjectId: duplicateSubject.id,
+          duplicateMaterialId: duplicateMaterial.id,
+        });
+        return;
+      }
       const storedFileName = buildUploadFileName(req.file);
       const resolvedMimeType =
         req.file.mimetype ||
@@ -1359,6 +1447,7 @@ app.post(
       material.fileName = storedFileName;
       material.originalName = req.file.originalname;
       material.mimeType = resolvedMimeType;
+      material.fileHash = fileHash;
     }
 
     subject.materials.push(material);
