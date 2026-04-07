@@ -3411,7 +3411,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
             ${isDownloaded ? 'target="_blank" rel="noopener noreferrer"' : `download="${escapeHtml(item.originalName || item.title || 'material')}"`}
-          >${isDownloaded ? 'Abrir' : 'Descargar'}</a>
+          >${isDownloaded ? 'Abrir con...' : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3681,20 +3681,21 @@ function triggerBrowserDownload(blob, fileName) {
 function openMaterialFileInNewTab(item) {
   const fileUrl = getAbsoluteMaterialFileUrl(item);
   if (!fileUrl) return;
-  const isAndroid = /android/i.test(navigator.userAgent || '');
-  if (isAndroid && /^https?:\/\//i.test(fileUrl)) {
-    const intentUrl = buildAndroidPdfIntentUrl(fileUrl);
-    if (intentUrl) {
-      const intentAnchor = document.createElement('a');
-      intentAnchor.href = intentUrl;
-      intentAnchor.style.display = 'none';
-      document.body.appendChild(intentAnchor);
-      intentAnchor.click();
-      intentAnchor.remove();
-      setNotice('Abriendo PDF con la app del dispositivo.');
-      return;
-    }
+  if (typeof navigator.share === 'function') {
+    navigator.share({
+      title: item.title || item.originalName || 'PDF',
+      url: fileUrl,
+    }).then(() => {
+      setNotice('Elige la app del dispositivo para abrir el PDF.');
+    }).catch(() => {
+      openMaterialFileFallback(fileUrl);
+    });
+    return;
   }
+  openMaterialFileFallback(fileUrl);
+}
+
+function openMaterialFileFallback(fileUrl) {
   const anchor = document.createElement('a');
   anchor.href = fileUrl;
   anchor.target = '_blank';
@@ -3704,16 +3705,6 @@ function openMaterialFileInNewTab(item) {
   anchor.click();
   anchor.remove();
   setNotice('Abriendo PDF.');
-}
-
-function buildAndroidPdfIntentUrl(absoluteUrl) {
-  try {
-    const parsed = new URL(absoluteUrl);
-    const path = `${parsed.host}${parsed.pathname}${parsed.search}`;
-    return `intent://${path}#Intent;scheme=${parsed.protocol.replace(':', '')};action=android.intent.action.VIEW;type=application/pdf;end`;
-  } catch (_) {
-    return '';
-  }
 }
 
 function openMaterialUploadModal() {
