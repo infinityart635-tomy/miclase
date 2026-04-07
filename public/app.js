@@ -46,6 +46,7 @@ const LAST_CAREER_STORAGE_PREFIX = 'miclase:last-career:';
 const LAST_STUDY_YEAR_STORAGE_PREFIX = 'miclase:last-study-year:';
 const SUBJECT_LIBRARY_PREFS_PREFIX = 'miclase:subject-library:';
 const SUBJECT_FAVORITES_PREFIX = 'miclase:subject-favorites:';
+const DOWNLOADED_MATERIALS_PREFIX = 'miclase:downloaded-materials:';
 const CACHED_SESSION_STORAGE_KEY = 'miclase:cached-session';
 const CACHED_DATA_STORAGE_PREFIX = 'miclase:cached-data:';
 const LAST_ROUTE_STORAGE_PREFIX = 'miclase:last-route:';
@@ -79,6 +80,11 @@ function getSubjectFavoritesKey(careerId = state.selectedCareerId) {
 function getCachedDataStorageKey() {
   const userId = String(state.user?.id || '').trim();
   return userId ? `${CACHED_DATA_STORAGE_PREFIX}${userId}` : '';
+}
+
+function getDownloadedMaterialsStorageKey() {
+  const userId = String(state.user?.id || '').trim();
+  return userId ? `${DOWNLOADED_MATERIALS_PREFIX}${userId}` : '';
 }
 
 function getLastRouteStorageKey() {
@@ -128,6 +134,42 @@ function restoreCachedData() {
   } catch (_) {
     return null;
   }
+}
+
+function restoreDownloadedMaterials() {
+  const key = getDownloadedMaterialsStorageKey();
+  if (!key) return new Set();
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value || '').trim()).filter(Boolean) : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function persistDownloadedMaterials(downloaded) {
+  const key = getDownloadedMaterialsStorageKey();
+  if (!key) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...downloaded]));
+  } catch (_) {
+    // Ignore storage failures and keep the app working.
+  }
+}
+
+function isMaterialDownloaded(item) {
+  const fileName = String(item?.fileName || '').trim();
+  if (!fileName) return false;
+  return restoreDownloadedMaterials().has(fileName);
+}
+
+function markMaterialAsDownloaded(item) {
+  const fileName = String(item?.fileName || '').trim();
+  if (!fileName) return;
+  const downloaded = restoreDownloadedMaterials();
+  downloaded.add(fileName);
+  persistDownloadedMaterials(downloaded);
 }
 
 function persistLastRoute() {
@@ -3308,6 +3350,7 @@ function renderSubjectMaterialCard(career, subject, item) {
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
+  const isDownloaded = isMaterialDownloaded(item);
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3346,7 +3389,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             >${escapeHtml(fileLabel)}</button>
           ` : ''}
         </div>
-        ${isPdf && hasFile ? `
+        ${isPdf && hasFile && !isDownloaded ? `
           <a
             class="material-quick-download"
             href="${escapeHtml(fileUrl)}"
@@ -3374,6 +3417,7 @@ function renderMaterialViewerContent(subject, item) {
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
+  const isDownloaded = isMaterialDownloaded(item);
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3395,11 +3439,13 @@ function renderMaterialViewerContent(subject, item) {
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-out>-</button>
             <button type="button" class="secondary material-viewer-zoom-reset" data-pdf-zoom-reset>100%</button>
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-in>+</button>
-            <a
-              class="secondary material-viewer-download"
-              href="${escapeHtml(fileUrl)}"
-              download="${escapeHtml(item.originalName || item.title || 'material')}"
-            >Descargar</a>
+            ${!isDownloaded ? `
+              <a
+                class="secondary material-viewer-download"
+                href="${escapeHtml(fileUrl)}"
+                download="${escapeHtml(item.originalName || item.title || 'material')}"
+              >Descargar</a>
+            ` : ''}
           </div>
           <div class="material-viewer-stage is-pdf">
             <div
@@ -3484,6 +3530,10 @@ function getMaterialFileExtensionLabel(item) {
 
 function openMaterialViewer(subject, item) {
   if (isMaterialPdf(item) && item?.fileName) {
+    if (isMaterialDownloaded(item)) {
+      openMaterialFileInNewTab(item);
+      return;
+    }
     downloadMaterialFile(item);
     return;
   }
@@ -3532,6 +3582,10 @@ function openMaterialViewer(subject, item) {
 
 async function downloadMaterialFile(item) {
   if (!item?.fileName) return;
+  if (isMaterialDownloaded(item)) {
+    openMaterialFileInNewTab(item);
+    return;
+  }
   const fileUrl = `/files/${encodeURIComponent(item.fileName)}`;
   const fileName = item.originalName || item.title || 'material';
   setTransferState({
@@ -3549,6 +3603,7 @@ async function downloadMaterialFile(item) {
     if (!response.body || !window.ReadableStream) {
       const blob = await response.blob();
       triggerBrowserDownload(blob, fileName);
+      markMaterialAsDownloaded(item);
       clearTransferState();
       setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
       return;
@@ -3586,6 +3641,7 @@ async function downloadMaterialFile(item) {
       type: response.headers.get('content-type') || 'application/octet-stream',
     });
     triggerBrowserDownload(blob, fileName);
+    markMaterialAsDownloaded(item);
     clearTransferState();
     setNotice('PDF descargado. Puedes abrirlo desde Google Drive sin volver a bajarlo.');
   } catch (error) {
@@ -3605,6 +3661,13 @@ function triggerBrowserDownload(blob, fileName) {
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function openMaterialFileInNewTab(item) {
+  const fileUrl = getMaterialFileUrl(item);
+  if (!fileUrl) return;
+  window.open(fileUrl, '_blank', 'noopener,noreferrer');
+  setNotice('Abriendo PDF.');
 }
 
 function openMaterialUploadModal() {
