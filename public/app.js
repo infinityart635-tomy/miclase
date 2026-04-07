@@ -232,6 +232,19 @@ function getAbsoluteMaterialFileUrl(item) {
   }
 }
 
+function hasNativePdfBridge() {
+  return /android/i.test(navigator.userAgent || '') && typeof window.AndroidPdfBridge !== 'undefined';
+}
+
+function isNativePdfDownloaded(item) {
+  if (!hasNativePdfBridge() || !isMaterialPdf(item)) return false;
+  try {
+    return Boolean(window.AndroidPdfBridge.isPdfDownloaded(getAbsoluteMaterialFileUrl(item)));
+  } catch (_) {
+    return false;
+  }
+}
+
 function postCacheMessage(type, payload = {}) {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.ready
@@ -461,6 +474,7 @@ boot().catch((error) => {
 
 async function boot() {
   registerDeviceCache();
+  initNativePdfBridge();
   wirePullToRefresh();
   initBrowserBackHandling();
   await refreshSession();
@@ -2951,7 +2965,7 @@ function wireCareerActions(career) {
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
       if (!material) return;
       event.preventDefault();
-      openMaterialPdf(material);
+      handlePdfAction(material);
     };
   });
 
@@ -3360,6 +3374,7 @@ function renderSubjectMaterialCard(career, subject, item) {
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
+  const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3404,7 +3419,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             href="${escapeHtml(fileUrl)}"
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
-          >Abrir PDF</a>
+          >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
         ` : ''}
         <button
           type="button"
@@ -3425,6 +3440,7 @@ function renderMaterialViewerContent(subject, item) {
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
+  const isDownloaded = hasNativePdfBridge() ? isNativePdfDownloaded(item) : isMaterialDownloaded(item);
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3450,7 +3466,7 @@ function renderMaterialViewerContent(subject, item) {
               class="secondary material-viewer-download"
               href="${escapeHtml(fileUrl)}"
               data-open-pdf-direct="true"
-            >Abrir PDF</a>
+            >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
           </div>
           <div class="material-viewer-stage is-pdf">
             <div
@@ -3535,7 +3551,7 @@ function getMaterialFileExtensionLabel(item) {
 
 function openMaterialViewer(subject, item) {
   if (isMaterialPdf(item) && item?.fileName) {
-    openMaterialPdf(item);
+    handlePdfAction(item);
     return;
   }
   warmCachedMaterialResource(item);
@@ -3579,6 +3595,33 @@ function openMaterialViewer(subject, item) {
     },
   };
   render();
+}
+
+function handlePdfAction(item) {
+  if (hasNativePdfBridge()) {
+    const fileUrl = getAbsoluteMaterialFileUrl(item);
+    const fileName = item.originalName || item.title || 'material.pdf';
+    const isDownloaded = isNativePdfDownloaded(item);
+    try {
+      if (isDownloaded) {
+        window.AndroidPdfBridge.openPdf(fileUrl, fileName);
+        return;
+      }
+      setTransferState({
+        active: true,
+        label: `Descargando ${fileName}`,
+        progress: 4,
+        indeterminate: true,
+      });
+      window.AndroidPdfBridge.downloadPdf(fileUrl, fileName);
+      return;
+    } catch (_) {
+      clearTransferState();
+      setNotice('No se pudo iniciar la descarga del PDF.');
+      return;
+    }
+  }
+  openMaterialPdf(item);
 }
 
 async function downloadMaterialFile(item) {
@@ -4454,6 +4497,42 @@ function registerDeviceCache() {
         // Keep the app usable even if the cache worker fails.
       });
   }, { once: true });
+}
+
+function initNativePdfBridge() {
+  window.addEventListener('miclase-pdf-refresh', () => {
+    render();
+  });
+  window.addEventListener('miclase-pdf-progress', (event) => {
+    const detail = event.detail || {};
+    const status = String(detail.status || '');
+    const message = String(detail.message || '');
+    const progress = Number(detail.progress || 0);
+    if (status === 'started' || status === 'downloading') {
+      setTransferState({
+        active: true,
+        label: message || 'Descargando PDF',
+        progress: progress > 0 ? progress : 8,
+        indeterminate: !(progress > 0),
+      });
+      return;
+    }
+    if (status === 'completed') {
+      clearTransferState();
+      setNotice(message || 'PDF descargado.');
+      render();
+      return;
+    }
+    if (status === 'opened') {
+      clearTransferState();
+      setNotice(message || 'Abriendo PDF.');
+      return;
+    }
+    if (status === 'error') {
+      clearTransferState();
+      setNotice(message || 'No se pudo descargar el PDF.');
+    }
+  });
 }
 
 
