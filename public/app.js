@@ -16,6 +16,7 @@ const state = {
   subjectMaterialSearchQuery: '',
   currentSubjectFolderId: null,
   selectedMaterialIds: [],
+  materialSelectionMode: false,
   notice: '',
   modal: null,
   materialUpload: null,
@@ -735,6 +736,7 @@ async function moveSubjectMaterial(careerId, subjectId, materialId, parentFolder
 
 function clearMaterialSelection() {
   state.selectedMaterialIds = [];
+  state.materialSelectionMode = false;
 }
 
 function toggleMaterialSelection(materialId, itemType) {
@@ -756,6 +758,52 @@ function toggleMaterialSelection(materialId, itemType) {
   }
   state.selectedMaterialIds = [...next];
   return true;
+}
+
+function getDeletableSelectedMaterialIds(subject) {
+  const selectedIds = new Set(state.selectedMaterialIds);
+  const materials = subject?.materials || [];
+  return materials
+    .filter((item) => selectedIds.has(item.id))
+    .filter((item) => {
+      let parentId = String(item.parentFolderId || '').trim();
+      while (parentId) {
+        if (selectedIds.has(parentId)) return false;
+        const parent = materials.find((candidate) => candidate.id === parentId);
+        parentId = String(parent?.parentFolderId || '').trim();
+      }
+      return true;
+    })
+    .map((item) => item.id);
+}
+
+function deleteSelectedMaterials(careerId, subject) {
+  const selectedIds = getDeletableSelectedMaterialIds(subject);
+  if (!selectedIds.length) return;
+  openConfirmModal({
+    eyebrow: 'Publicaciones',
+    title: 'Eliminar seleccion',
+    message: `Se eliminaran ${selectedIds.length} elemento${selectedIds.length === 1 ? '' : 's'} seleccionados.`,
+    confirmLabel: 'Eliminar',
+    onConfirm: async () => {
+      try {
+        for (const materialId of selectedIds) {
+          await api(`/api/careers/${careerId}/subjects/${subject.id}/materials/${materialId}`, {
+            method: 'DELETE',
+          });
+        }
+        if (state.currentSubjectFolderId && selectedIds.includes(state.currentSubjectFolderId)) {
+          state.currentSubjectFolderId = null;
+        }
+        await loadData();
+        clearMaterialSelection();
+        render();
+        setNotice('Seleccion eliminada.');
+      } catch (error) {
+        setNotice(error.message);
+      }
+    },
+  });
 }
 
 async function moveSelectedMaterialsToFolder(careerId, subjectId, parentFolderId) {
@@ -1973,16 +2021,19 @@ function renderSubjectDetailView(career, subject) {
                 </div>
               ` : ''}
             </div>
-            ${currentFolder ? `
-              <button
-                type="button"
-                class="danger subject-folder-delete"
-                id="deleteCurrentSubjectFolder"
-                data-delete-subject-material="${escapeHtml(currentFolder.id)}"
-                data-subject-id="${escapeHtml(subjectRecord.id)}"
-                data-parent-folder-id="${escapeHtml(currentFolder.parentFolderId || '')}"
-              >Eliminar carpeta</button>
-            ` : ''}
+            <div class="subject-material-actions">
+              <button type="button" class="secondary" id="toggleMaterialSelectionMode">${state.materialSelectionMode ? 'Cancelar seleccion' : 'Seleccionar'}</button>
+              ${currentFolder ? `
+                <button
+                  type="button"
+                  class="danger subject-folder-delete"
+                  id="deleteCurrentSubjectFolder"
+                  data-delete-subject-material="${escapeHtml(currentFolder.id)}"
+                  data-subject-id="${escapeHtml(subjectRecord.id)}"
+                  data-parent-folder-id="${escapeHtml(currentFolder.parentFolderId || '')}"
+                >Eliminar carpeta</button>
+              ` : ''}
+            </div>
           </div>
           ${materials.length ? materials.map((item) => renderSubjectMaterialCard(career, subjectRecord, item)).join('') : `
             <div class="schedule-empty-card">
@@ -2372,6 +2423,54 @@ function wireCareerActions(career) {
   if (openSubjectMaterialModal && state.selectedSubjectId) {
     openSubjectMaterialModal.onclick = () => {
       openMaterialUploadModal();
+    };
+  }
+
+  const toggleMaterialSelectionMode = document.getElementById('toggleMaterialSelectionMode');
+  if (toggleMaterialSelectionMode) {
+    toggleMaterialSelectionMode.onclick = () => {
+      if (state.materialSelectionMode) {
+        clearMaterialSelection();
+      } else {
+        state.materialSelectionMode = true;
+        state.selectedMaterialIds = [];
+      }
+      render();
+    };
+  }
+
+  document.querySelectorAll('[data-material-select-toggle]').forEach((button) => {
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const materialId = button.dataset.materialSelectToggle || '';
+      const itemType = button.dataset.materialType || 'file';
+      if (!materialId) return;
+      const changed = toggleMaterialSelection(materialId, itemType);
+      if (!changed) {
+        setNotice('No puedes mezclar carpetas con archivos en la misma seleccion.');
+        return;
+      }
+      render();
+    };
+  });
+
+  if (state.materialSelectionMode && state.selectedMaterialIds.length && !document.getElementById('deleteSelectedMaterialsBtn')) {
+    const floatingDelete = document.createElement('button');
+    floatingDelete.type = 'button';
+    floatingDelete.id = 'deleteSelectedMaterialsBtn';
+    floatingDelete.className = 'subject-floating-delete danger';
+    floatingDelete.textContent = `Eliminar (${state.selectedMaterialIds.length})`;
+    floatingDelete.setAttribute('aria-label', 'Eliminar seleccion');
+    document.querySelector('.career-detail-panel')?.appendChild(floatingDelete);
+  }
+
+  const deleteSelectedMaterialsBtn = document.getElementById('deleteSelectedMaterialsBtn');
+  if (deleteSelectedMaterialsBtn && state.selectedSubjectId) {
+    deleteSelectedMaterialsBtn.onclick = () => {
+      const subject = (career.subjects || []).find((item) => item.id === state.selectedSubjectId);
+      if (!subject) return;
+      deleteSelectedMaterials(career.id, subject);
     };
   }
 
@@ -2856,10 +2955,19 @@ function wireCareerActions(career) {
       const materialId = card.dataset.materialId || '';
       const itemType = card.dataset.materialType || 'file';
       const target = event.target;
-      if (target.closest('[data-material-drag-handle]') || target.closest('[data-open-material-folder]') || target.closest('[data-open-subject-material]') || target.closest('[data-download-subject-material]')) {
+      if (target.closest('[data-material-drag-handle]') || target.closest('[data-open-material-folder]') || target.closest('[data-open-subject-material]') || target.closest('[data-download-subject-material]') || target.closest('[data-material-select-toggle]')) {
         return;
       }
       if (!materialId) return;
+      if (state.materialSelectionMode) {
+        const changed = toggleMaterialSelection(materialId, itemType);
+        if (!changed) {
+          setNotice('No puedes mezclar carpetas con archivos en la misma seleccion.');
+          return;
+        }
+        render();
+        return;
+      }
       if (itemType === 'folder') {
         if (state.selectedMaterialIds.length) {
           if (state.selectedMaterialIds.includes(materialId)) {
@@ -3421,9 +3529,18 @@ function renderSubjectMaterialCard(career, subject, item) {
             data-download-subject-material="${escapeHtml(item.id)}"
           >${isDownloaded ? 'Abrir PDF' : 'Descargar'}</a>
         ` : ''}
+        ${state.materialSelectionMode ? `
+          <button
+            type="button"
+            class="material-select-toggle ${isSelected ? 'is-selected' : ''}"
+            data-material-select-toggle="${escapeHtml(item.id)}"
+            data-material-type="${escapeHtml(item.itemType || 'file')}"
+            aria-label="${isSelected ? 'Quitar de la seleccion' : 'Seleccionar'}"
+          >${isSelected ? '✓' : ''}</button>
+        ` : ''}
         <button
           type="button"
-          class="material-drag-handle"
+          class="material-drag-handle ${state.materialSelectionMode ? 'hidden' : ''}"
           data-material-drag-handle="${escapeHtml(item.id)}"
           data-material-type="${escapeHtml(item.itemType || 'file')}"
           draggable="true"
