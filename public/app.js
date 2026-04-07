@@ -2952,7 +2952,7 @@ function wireCareerActions(career) {
       if (!material) return;
       if (isMaterialDownloaded(material)) {
         event.preventDefault();
-        openMaterialFileInNewTab(material);
+        await openMaterialFileInNewTab(material);
         return;
       }
       event.preventDefault();
@@ -3679,22 +3679,45 @@ function triggerBrowserDownload(blob, fileName) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
-function openMaterialFileInNewTab(item) {
+async function openMaterialFileInNewTab(item) {
   const fileUrl = getAbsoluteMaterialFileUrl(item);
   if (!fileUrl) return;
   const isAndroid = /android/i.test(navigator.userAgent || '');
-  if (isAndroid && typeof navigator.share === 'function') {
-    navigator.share({
-      title: item.title || item.originalName || 'PDF',
-      url: fileUrl,
-    }).then(() => {
-      setNotice('Elige la app del dispositivo para abrir el PDF.');
-    }).catch(() => {
-      openMaterialFileFallback(fileUrl);
-    });
-    return;
+  if (isAndroid) {
+    const shared = await shareMaterialAsFile(item, fileUrl);
+    if (shared) {
+      return;
+    }
   }
   openMaterialFileFallback(fileUrl);
+}
+
+async function shareMaterialAsFile(item, fileUrl) {
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') {
+    return false;
+  }
+  try {
+    const response = await fetch(fileUrl, { credentials: 'same-origin' });
+    if (!response.ok) {
+      return false;
+    }
+    const blob = await response.blob();
+    const fileName = item.originalName || item.title || 'material.pdf';
+    const sharedFile = new File([blob], fileName, {
+      type: blob.type || item.mimeType || 'application/pdf',
+    });
+    if (!navigator.canShare({ files: [sharedFile] })) {
+      return false;
+    }
+    await navigator.share({
+      title: item.title || item.originalName || 'PDF',
+      files: [sharedFile],
+    });
+    setNotice('Elige la app del dispositivo para abrir el PDF.');
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function openMaterialFileFallback(fileUrl) {
