@@ -2950,13 +2950,8 @@ function wireCareerActions(career) {
       const subjectSource = (career.subjects || []).find((item) => item.id === link.dataset.subjectId) || subjectRecord;
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
       if (!material) return;
-      if (isMaterialDownloaded(material)) {
-        event.preventDefault();
-        await openMaterialFileInNewTab(material);
-        return;
-      }
       event.preventDefault();
-      await downloadMaterialFile(material);
+      openMaterialPdf(material);
     };
   });
 
@@ -3365,8 +3360,6 @@ function renderSubjectMaterialCard(career, subject, item) {
   const hasFile = Boolean(fileUrl);
   const isLink = item.itemType === 'link';
   const isPdf = isMaterialPdf(item);
-  const isDownloaded = isMaterialDownloaded(item);
-  const isAndroid = /android/i.test(navigator.userAgent || '');
   const fileLabel = getMaterialFileExtensionLabel(item);
   const materialColor = getMaterialColor(item);
   const isFolder = item.itemType === 'folder';
@@ -3411,8 +3404,7 @@ function renderSubjectMaterialCard(career, subject, item) {
             href="${escapeHtml(fileUrl)}"
             data-subject-id="${escapeHtml(subject.id)}"
             data-download-subject-material="${escapeHtml(item.id)}"
-            ${isDownloaded ? 'target="_blank" rel="noopener noreferrer"' : `download="${escapeHtml(item.originalName || item.title || 'material')}"`}
-          >${isDownloaded ? (isAndroid ? 'Compartir / Abrir con...' : 'Abrir con...') : 'Descargar'}</a>
+          >Abrir PDF</a>
         ` : ''}
         <button
           type="button"
@@ -3433,7 +3425,6 @@ function renderMaterialViewerContent(subject, item) {
   const linkUrl = item.itemType === 'link' ? normalizeExternalUrl(item.content || '') : '';
   const isPdf = isMaterialPdf(item);
   const isImage = isMaterialImage(item);
-  const isDownloaded = isMaterialDownloaded(item);
   if (item.itemType === 'link' && linkUrl) {
     return `
       <section class="material-viewer-shell">
@@ -3455,13 +3446,11 @@ function renderMaterialViewerContent(subject, item) {
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-out>-</button>
             <button type="button" class="secondary material-viewer-zoom-reset" data-pdf-zoom-reset>100%</button>
             <button type="button" class="secondary material-viewer-zoom-btn" data-pdf-zoom-in>+</button>
-            ${!isDownloaded ? `
-              <a
-                class="secondary material-viewer-download"
-                href="${escapeHtml(fileUrl)}"
-                download="${escapeHtml(item.originalName || item.title || 'material')}"
-              >Descargar</a>
-            ` : ''}
+            <a
+              class="secondary material-viewer-download"
+              href="${escapeHtml(fileUrl)}"
+              data-open-pdf-direct="true"
+            >Abrir PDF</a>
           </div>
           <div class="material-viewer-stage is-pdf">
             <div
@@ -3546,11 +3535,7 @@ function getMaterialFileExtensionLabel(item) {
 
 function openMaterialViewer(subject, item) {
   if (isMaterialPdf(item) && item?.fileName) {
-    if (isMaterialDownloaded(item)) {
-      openMaterialFileInNewTab(item);
-      return;
-    }
-    downloadMaterialFile(item);
+    openMaterialPdf(item);
     return;
   }
   warmCachedMaterialResource(item);
@@ -3688,6 +3673,17 @@ async function openMaterialFileInNewTab(item) {
     if (shared) {
       return;
     }
+  }
+  openMaterialFileFallback(fileUrl);
+}
+
+function openMaterialPdf(item) {
+  const fileUrl = getAbsoluteMaterialFileUrl(item);
+  if (!fileUrl) return;
+  const isAndroid = /android/i.test(navigator.userAgent || '');
+  if (isAndroid) {
+    window.location.href = fileUrl;
+    return;
   }
   openMaterialFileFallback(fileUrl);
 }
