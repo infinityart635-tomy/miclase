@@ -222,6 +222,16 @@ function getMaterialFileUrl(item) {
   return item?.fileName ? `/files/${encodeURIComponent(item.fileName)}` : '';
 }
 
+function getAbsoluteMaterialFileUrl(item) {
+  const relativeUrl = getMaterialFileUrl(item);
+  if (!relativeUrl) return '';
+  try {
+    return new URL(relativeUrl, window.location.origin).toString();
+  } catch (_) {
+    return relativeUrl;
+  }
+}
+
 function postCacheMessage(type, payload = {}) {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.ready
@@ -2941,6 +2951,8 @@ function wireCareerActions(career) {
       const material = (subjectSource?.materials || []).find((item) => item.id === link.dataset.downloadSubjectMaterial);
       if (!material) return;
       if (isMaterialDownloaded(material)) {
+        event.preventDefault();
+        openMaterialFileInNewTab(material);
         return;
       }
       event.preventDefault();
@@ -3667,8 +3679,22 @@ function triggerBrowserDownload(blob, fileName) {
 }
 
 function openMaterialFileInNewTab(item) {
-  const fileUrl = getMaterialFileUrl(item);
+  const fileUrl = getAbsoluteMaterialFileUrl(item);
   if (!fileUrl) return;
+  const isAndroid = /android/i.test(navigator.userAgent || '');
+  if (isAndroid && /^https?:\/\//i.test(fileUrl)) {
+    const intentUrl = buildAndroidPdfIntentUrl(fileUrl);
+    if (intentUrl) {
+      const intentAnchor = document.createElement('a');
+      intentAnchor.href = intentUrl;
+      intentAnchor.style.display = 'none';
+      document.body.appendChild(intentAnchor);
+      intentAnchor.click();
+      intentAnchor.remove();
+      setNotice('Abriendo PDF con la app del dispositivo.');
+      return;
+    }
+  }
   const anchor = document.createElement('a');
   anchor.href = fileUrl;
   anchor.target = '_blank';
@@ -3678,6 +3704,16 @@ function openMaterialFileInNewTab(item) {
   anchor.click();
   anchor.remove();
   setNotice('Abriendo PDF.');
+}
+
+function buildAndroidPdfIntentUrl(absoluteUrl) {
+  try {
+    const parsed = new URL(absoluteUrl);
+    const path = `${parsed.host}${parsed.pathname}${parsed.search}`;
+    return `intent://${path}#Intent;scheme=${parsed.protocol.replace(':', '')};action=android.intent.action.VIEW;type=application/pdf;end`;
+  } catch (_) {
+    return '';
+  }
 }
 
 function openMaterialUploadModal() {
