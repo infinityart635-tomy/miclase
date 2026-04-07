@@ -66,6 +66,29 @@ const nativePdfPendingPollers = new Map();
 const nativePdfOpenSearches = new Map();
 const nativePdfOpenAttempts = new Map();
 
+function formatPdfDebugValue(value) {
+  if (value === null || typeof value === 'undefined') return '-';
+  if (typeof value === 'boolean') return value ? 'si' : 'no';
+  const normalized = String(value).trim();
+  return normalized || '-';
+}
+
+function logPdfDebug(step, details = {}, options = {}) {
+  const entries = Object.entries(details)
+    .filter(([, value]) => value !== '' && typeof value !== 'undefined')
+    .map(([key, value]) => `${key}=${formatPdfDebugValue(value)}`);
+  const summary = entries.length ? `${step} | ${entries.join(' | ')}` : step;
+  try {
+    console.debug('[MiClase PDF]', summary, details);
+  } catch (_) {
+    // Ignore console issues.
+  }
+  if (options.visible) {
+    setNotice(`PDF debug: ${summary}`);
+  }
+  return summary;
+}
+
 function getLastCareerStorageKey() {
   const userId = String(state.user?.id || '').trim();
   return userId ? LAST_CAREER_STORAGE_PREFIX + userId : '';
@@ -381,6 +404,11 @@ function searchAndOpenNativePdf(item) {
   const key = getMaterialTransferKey(item);
   if (!key) return;
   if (nativePdfOpenSearches.has(key)) {
+    logPdfDebug('open-search-already-running', {
+      key,
+      fileName: item?.fileName,
+      title: item?.title,
+    }, { visible: true });
     setNotice('Buscando PDF descargado...');
     return;
   }
@@ -399,6 +427,17 @@ function searchAndOpenNativePdf(item) {
   };
   const tryOpen = () => {
     attempts += 1;
+    logPdfDebug('open-search-attempt', {
+      key,
+      attempt: `${attempts}/${maxAttempts}`,
+      downloaded: isNativePdfDownloaded(item),
+      pending: isPendingNativePdfDownload(item),
+      fileUrl: getAbsoluteMaterialFileUrl(item),
+      downloadUrl: getAbsoluteMaterialDownloadUrl(item),
+      fileName: item?.fileName,
+      originalName: item?.originalName,
+      title: item?.title,
+    }, { visible: attempts === 1 });
     if (isNativePdfDownloaded(item)) {
       finishSearch();
       clearPendingNativePdfDownload(item);
@@ -411,16 +450,40 @@ function searchAndOpenNativePdf(item) {
         if (!openNativePdfWithBridge(item)) {
           throw new Error('native-open-missing-url');
         }
+        logPdfDebug('open-search-dispatched-to-bridge', {
+          key,
+          fileName: item?.fileName,
+          originalName: item?.originalName,
+          title: item?.title,
+        }, { visible: true });
       } catch (_) {
+        logPdfDebug('open-search-bridge-throw', {
+          key,
+          fileName: item?.fileName,
+          originalName: item?.originalName,
+          title: item?.title,
+        }, { visible: true });
         setNotice('No pude abrir el PDF todavia.');
       }
       return;
     }
     if (attempts >= maxAttempts) {
       finishSearch();
+      logPdfDebug('open-search-timeout', {
+        key,
+        fileName: item?.fileName,
+        originalName: item?.originalName,
+        title: item?.title,
+      }, { visible: true });
       setNotice('Todavia se esta ubicando el PDF en el dispositivo.');
     }
   };
+  logPdfDebug('open-search-start', {
+    key,
+    fileName: item?.fileName,
+    originalName: item?.originalName,
+    title: item?.title,
+  }, { visible: true });
   setNotice('Buscando PDF descargado...');
   tryOpen();
   if (finished) return;
@@ -726,6 +789,11 @@ function openNativePdfWithBridge(item) {
   }
   if (attempt.index >= attempt.candidates.length) {
     clearNativePdfOpenAttempt(itemKey);
+    logPdfDebug('bridge-open-fallback-remote', {
+      key: itemKey,
+      fileUrl,
+      candidates: candidates.join(', '),
+    }, { visible: true });
     setNotice('No encontre la copia descargada. Abro el PDF desde MiClase.');
     openMaterialPdf(item);
     return true;
@@ -733,9 +801,23 @@ function openNativePdfWithBridge(item) {
   const candidateName = attempt.candidates[attempt.index];
   attempt.index += 1;
   nativePdfOpenAttempts.set(itemKey, attempt);
+  logPdfDebug('bridge-open-call', {
+    key: itemKey,
+    candidate: candidateName,
+    candidateIndex: `${attempt.index}/${attempt.candidates.length}`,
+    fileUrl,
+    fileName: item?.fileName,
+    originalName: item?.originalName,
+    title: item?.title,
+  }, { visible: true });
   try {
     window.AndroidPdfBridge.openPdf(fileUrl, candidateName);
   } catch (_) {
+    logPdfDebug('bridge-open-throw', {
+      key: itemKey,
+      candidate: candidateName,
+      fileUrl,
+    }, { visible: true });
     return openNativePdfWithBridge(item);
   }
   attempt.timerId = window.setTimeout(() => {
@@ -4201,6 +4283,19 @@ function handlePdfAction(item) {
     const isDownloaded = isNativePdfDownloaded(item);
     const transferKey = getNativePdfSimulationTransferKey(item);
     const isOptimisticReady = isNativePdfOptimisticallyReady(item);
+    logPdfDebug('handle-pdf-action', {
+      key: getMaterialTransferKey(item),
+      transferKey,
+      downloaded: isDownloaded,
+      optimistic: isOptimisticReady,
+      pending: isPendingNativePdfDownload(item),
+      simulating: isNativePdfSimulationActive(item),
+      fileUrl: getAbsoluteMaterialFileUrl(item),
+      downloadUrl: getAbsoluteMaterialDownloadUrl(item),
+      fileName: item?.fileName,
+      originalName: item?.originalName,
+      title: item?.title,
+    }, { visible: true });
     try {
       if (isDownloaded) {
         clearPendingNativePdfDownload(item);
@@ -4226,11 +4321,23 @@ function handlePdfAction(item) {
       if (!downloadNativePdfWithBridge(item)) {
         throw new Error('native-download-missing-url');
       }
+      logPdfDebug('handle-pdf-download-dispatched', {
+        key: getMaterialTransferKey(item),
+        fileUrl: getAbsoluteMaterialFileUrl(item),
+        downloadUrl: getAbsoluteMaterialDownloadUrl(item),
+        fileName: item?.fileName,
+      }, { visible: true });
       return;
     } catch (_) {
       clearPendingNativePdfDownload(item);
       stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
       clearTransferState();
+      logPdfDebug('handle-pdf-action-error', {
+        key: getMaterialTransferKey(item),
+        fileName: item?.fileName,
+        originalName: item?.originalName,
+        title: item?.title,
+      }, { visible: true });
       setNotice('No se pudo iniciar la descarga del PDF.');
       return;
     }
@@ -5085,6 +5192,7 @@ function registerDeviceCache() {
 
 function initNativePdfBridge() {
   window.addEventListener('miclase-pdf-refresh', () => {
+    logPdfDebug('native-event-refresh', {}, { visible: true });
     syncDownloadedNativePdfs();
     render();
   });
@@ -5095,6 +5203,17 @@ function initNativePdfBridge() {
     const progress = Number(detail.progress || 0);
     const material = findMaterialByFileUrl(detail.url || '');
     const transferKey = material ? getNativePdfSimulationTransferKey(material) : '';
+    logPdfDebug('native-event-progress', {
+      status,
+      progress,
+      url: detail.url || '',
+      message,
+      materialFound: Boolean(material),
+      fileName: material?.fileName,
+      originalName: material?.originalName,
+      title: material?.title,
+      transferKey,
+    }, { visible: true });
     if (status === 'started' || status === 'downloading') {
       if (material) {
         markPendingNativePdfDownload(material);
