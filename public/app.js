@@ -177,19 +177,51 @@ function markMaterialAsDownloaded(item) {
 function findMaterialByFileUrl(url) {
   const rawUrl = String(url || '').trim();
   if (!rawUrl) return null;
+  let rawFileName = '';
+  try {
+    rawFileName = decodeURIComponent(new URL(rawUrl, window.location.origin).pathname.split('/').pop() || '').trim();
+  } catch (_) {
+    rawFileName = '';
+  }
   for (const career of state.db.careers || []) {
     for (const subject of career.subjects || []) {
       for (const material of subject.materials || []) {
         if (!material?.fileName) continue;
         const absoluteFileUrl = getAbsoluteMaterialFileUrl(material);
         const absoluteDownloadUrl = getAbsoluteMaterialDownloadUrl(material);
-        if (rawUrl === absoluteFileUrl || rawUrl === absoluteDownloadUrl) {
+        if (
+          rawUrl === absoluteFileUrl
+          || rawUrl === absoluteDownloadUrl
+          || (rawFileName && rawFileName === String(material.fileName || '').trim())
+        ) {
           return material;
         }
       }
     }
   }
   return null;
+}
+
+function syncDownloadedNativePdfs() {
+  if (!hasNativePdfBridge()) return;
+  const downloaded = restoreDownloadedMaterials();
+  let changed = false;
+  for (const career of state.db.careers || []) {
+    for (const subject of career.subjects || []) {
+      for (const material of subject.materials || []) {
+        if (!material?.fileName || !isMaterialPdf(material)) continue;
+        const downloadedByBridge = Boolean(getDownloadedNativePdfBridgeUrl(material));
+        const fileName = String(material.fileName || '').trim();
+        if (downloadedByBridge && fileName && !downloaded.has(fileName)) {
+          downloaded.add(fileName);
+          changed = true;
+        }
+      }
+    }
+  }
+  if (changed) {
+    persistDownloadedMaterials(downloaded);
+  }
 }
 
 function persistLastRoute() {
@@ -646,6 +678,7 @@ async function loadData() {
     setNotice('Sin internet. Mostrando lo ultimo que ya abriste.');
   }
   state.db = db;
+  syncDownloadedNativePdfs();
   if (state.selectedCareerId && !db.careers.find((career) => career.id === state.selectedCareerId)) {
     state.selectedCareerId = null;
     state.selectedSubjectId = null;
@@ -4608,6 +4641,7 @@ function registerDeviceCache() {
 
 function initNativePdfBridge() {
   window.addEventListener('miclase-pdf-refresh', () => {
+    syncDownloadedNativePdfs();
     render();
   });
   window.addEventListener('miclase-pdf-progress', (event) => {
@@ -4629,6 +4663,7 @@ function initNativePdfBridge() {
       if (material) {
         markMaterialAsDownloaded(material);
       }
+      syncDownloadedNativePdfs();
       clearTransferState();
       setNotice(message || 'PDF descargado.');
       render();
@@ -4639,6 +4674,7 @@ function initNativePdfBridge() {
       if (material) {
         markMaterialAsDownloaded(material);
       }
+      syncDownloadedNativePdfs();
       clearTransferState();
       setNotice(message || 'Abriendo PDF.');
       render();
