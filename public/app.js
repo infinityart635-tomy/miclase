@@ -469,6 +469,8 @@ function searchAndOpenNativePdf(item) {
     }
     if (attempts >= maxAttempts) {
       finishSearch();
+      clearPendingNativePdfDownload(item);
+      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
       logPdfDebug('open-search-timeout', {
         key,
         fileName: item?.fileName,
@@ -4280,16 +4282,35 @@ function openMaterialViewer(subject, item) {
 
 function handlePdfAction(item) {
   if (hasNativePdfBridge()) {
-    const isDownloaded = isNativePdfDownloaded(item);
+    let isDownloaded = isNativePdfDownloaded(item);
     const transferKey = getNativePdfSimulationTransferKey(item);
-    const isOptimisticReady = isNativePdfOptimisticallyReady(item);
+    let isOptimisticReady = isNativePdfOptimisticallyReady(item);
+    let isPendingDownload = isPendingNativePdfDownload(item);
+    const isSimulatingDownload = isNativePdfSimulationActive(item);
+
+    if (!isDownloaded && (isOptimisticReady || isPendingDownload) && !isSimulatingDownload) {
+      logPdfDebug('handle-pdf-clearing-stale-pending', {
+        key: getMaterialTransferKey(item),
+        optimistic: isOptimisticReady,
+        pending: isPendingDownload,
+        fileName: item?.fileName,
+        originalName: item?.originalName,
+        title: item?.title,
+      }, { visible: true });
+      clearPendingNativePdfDownload(item);
+      stopNativePdfDownloadSimulation(item, { clearTransfer: true, clearOptimistic: true });
+      isOptimisticReady = false;
+      isPendingDownload = false;
+      isDownloaded = isNativePdfDownloaded(item);
+    }
+
     logPdfDebug('handle-pdf-action', {
       key: getMaterialTransferKey(item),
       transferKey,
       downloaded: isDownloaded,
       optimistic: isOptimisticReady,
-      pending: isPendingNativePdfDownload(item),
-      simulating: isNativePdfSimulationActive(item),
+      pending: isPendingDownload,
+      simulating: isSimulatingDownload,
       fileUrl: getAbsoluteMaterialFileUrl(item),
       downloadUrl: getAbsoluteMaterialDownloadUrl(item),
       fileName: item?.fileName,
@@ -4311,7 +4332,7 @@ function handlePdfAction(item) {
         searchAndOpenNativePdf(item);
         return;
       }
-      if (isPendingNativePdfDownload(item) || isNativePdfSimulationActive(item)) {
+      if (isPendingDownload || isSimulatingDownload) {
         setNotice('Ese PDF ya se esta descargando.');
         return;
       }
